@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>fine</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #646b78; --line: #e3e6eb;
+  --accent: #2f6fde; --good: #1d8a5b; --warn: #c27a09; --bad: #c8382e; --income: #1d8a5b; --expense: #d0603b;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1115; --card: #181b21; --text: #e9ebef; --muted: #9aa1ad; --line: #2a2e36;
+    --accent: #6c9dff; --good: #3fbf86; --warn: #e5a23a; --bad: #f06a5f; --income: #3fbf86; --expense: #f08a62; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 20px 16px 4px; max-width: 1100px; margin: 0 auto; }
+header h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+header span { color: var(--muted); font-size: 13px; }
+main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 48px; display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
+section { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; grid-column: span 12; min-width: 0; }
+@media (min-width: 900px) { .half { grid-column: span 6; } }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi .label { color: var(--muted); font-size: 13px; }
+.kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.kpi .value.neg { color: var(--bad); }
+.pace { margin-top: 14px; }
+.bar { position: relative; height: 10px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: var(--accent); }
+.bar > b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .55; }
+.small { color: var(--muted); font-size: 13px; }
+.alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.alerts li { padding: 10px 12px; border-radius: 10px; border-left: 4px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.alerts li.warning { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.alerts li.critical { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; margin-bottom: 10px; }
+.row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .amt { font-variant-numeric: tabular-nums; }
+.row .bar { grid-column: 1 / -1; height: 8px; }
+.ok > i { background: var(--good); } .attenzione > i { background: var(--warn); } .sforato > i { background: var(--bad); }
+svg text { fill: var(--muted); font-size: 11px; }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td .desc { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.pos { color: var(--income); }
+.tablewrap { overflow-x: auto; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+input, select, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+select.cat { max-width: 170px; padding: 3px 6px; font-size: 13px; }
+.empty { color: var(--muted); padding: 8px 0; }
+.err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header><h1>fine</h1><span id="updated"></span></header>
+<main>
+  <section>
+    <h2>Quanto posso spendere</h2>
+    <div class="kpis" id="kpis"></div>
+    <div class="pace" id="pace"></div>
+  </section>
+  <section id="alerts-section"><h2>Avvisi</h2><ul class="alerts" id="alerts"></ul></section>
+  <section class="half"><h2>Budget</h2><div id="budgets"></div></section>
+  <section class="half"><h2>Accantonamenti spese annuali</h2><div id="sinking"></div></section>
+  <section><h2>Ultimi 12 mesi</h2>
+    <div class="legend"><span><i style="background:var(--income)"></i>Entrate</span><span><i style="background:var(--expense)"></i>Uscite</span></div>
+    <div id="trend"></div>
+  </section>
+  <section class="half"><h2>Spese per categoria · <select id="month"></select></h2><div id="cats"></div><p class="small" id="savings"></p></section>
+  <section class="half"><h2>Spese ricorrenti</h2><div id="recurring"></div></section>
+  <section><h2>Transazioni</h2>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Cerca esercente o descrizione">
+      <select id="fcat"><option value="">Tutte le categorie</option></select>
+      <label class="small"><input type="checkbox" id="unc"> solo da categorizzare</label>
+    </div>
+    <div class="tablewrap"><table><thead><tr><th>Data</th><th>Esercente</th><th>Categoria</th><th style="text-align:right">Importo</th></tr></thead><tbody id="txs"></tbody></table></div>
+  </section>
+</main>
+<script>
+"use strict";
+const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
+const $ = (id) => document.getElementById(id);
+// Build DOM safely: bank text is untrusted, so it only ever goes through textContent.
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v; else if (k === "style") el.style.cssText = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return el;
+}
+const svgNS = "http://www.w3.org/2000/svg";
+function s(tag, attrs = {}) { const el = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; }
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function bar(frac, marker, cls = "") {
+  const b = h("div", { class: "bar " + cls }, h("i", { style: `width:${Math.min(100, Math.max(0, frac * 100))}%` }));
+  if (marker != null) b.append(h("b", { style: `left:${Math.min(100, marker * 100)}%` }));
+  return b;
+}
+let categories = [];
+
+async function loadStatus() {
+  const st = await api("/api/status");
+  $("updated").textContent = "Aggiornato al " + new Date(st.today).toLocaleDateString("it-IT");
+  const kpi = (label, v, note) => h("div", { class: "kpi" }, h("div", { class: "label" }, label),
+    h("div", { class: "value" + (v < 0 ? " neg" : "") }, euro.format(v)), note ? h("div", { class: "small" }, note) : null);
+  $("kpis").replaceChildren(
+    kpi("Disponibile nel mese", st.available_month, `${st.days_left_in_month} giorni rimasti`),
+    kpi("Questa settimana", st.available_week, `già spesi ${euro.format(st.spent_this_week)}`),
+    kpi("Al giorno", st.available_per_day),
+    st.balance_total != null ? kpi("Saldo conti", st.balance_total) : null);
+  $("pace").replaceChildren(
+    h("div", { class: "small", style: "margin-bottom:6px" },
+      `Spese variabili ${euro.format(st.variable_spent)} su ${euro.format(st.variable_budget)} · la linea indica dove dovresti essere oggi`),
+    bar(st.budget_used, st.month_elapsed, st.budget_used > 1 ? "sforato" : st.budget_used > st.month_elapsed + 0.15 ? "attenzione" : "ok"),
+    h("div", { class: "small", style: "margin-top:6px" },
+      `Entrate ${euro.format(st.income_received + st.income_expected_remaining)} · fisse ${euro.format(st.fixed_paid + st.fixed_still_due)} · accantonamenti ${euro.format(st.sinking_fund_quota)} · obiettivo risparmio ${euro.format(st.savings_goal)}`));
+  $("alerts").replaceChildren(...st.alerts.map((a) => h("li", { class: a.level }, a.message)));
+  $("alerts-section").hidden = st.alerts.length === 0;
+  const per = { week: "settimana", month: "mese", year: "anno" };
+  $("budgets").replaceChildren(...(st.budgets.length ? st.budgets.map((b) => h("div", { class: "row" },
+    h("span", { class: "name" }, `${b.category} · ${per[b.period]}`),
+    h("span", { class: "amt" }, `${euro.format(b.spent)} / ${euro.format(b.limit)}`),
+    bar(b.used, b.elapsed, b.state))) : [h("p", { class: "empty" }, "Nessun budget. Chiedi all'AI: \"aiutami a impostare il piano mensile\".")]));
+}
+
+async function loadSinking() {
+  const list = await api("/api/sinking");
+  $("sinking").replaceChildren(...(list.length ? list.map((f) => h("div", { class: "row" },
+    h("span", { class: "name" }, `${f.name} · ${new Date(f.due).toLocaleDateString("it-IT")}`),
+    h("span", { class: "amt" }, `${euro.format(f.monthly_quota)}/mese`),
+    bar(f.should_have_saved / f.amount, null),
+    h("span", { class: "small" }, `da avere da parte: ${euro.format(f.should_have_saved)} di ${euro.format(f.amount)}`))) :
+    [h("p", { class: "empty" }, "Nessuna spesa annuale prevista (assicurazioni, bollo, tasse...).")]));
+}
+
+async function loadTrend() {
+  const data = await api("/api/trend");
+  const W = 720, H = 220, pad = 28, max = Math.max(1, ...data.flatMap((d) => [d.income, d.expenses]));
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H + 20}`, width: "100%", role: "img", "aria-label": "Entrate e uscite per mese" });
+  const slot = (W - pad) / data.length, bw = Math.min(18, slot / 3);
+  for (let g = 0; g <= 4; g++) {
+    const y = H - (H - 10) * g / 4;
+    svg.append(s("line", { x1: pad, x2: W, y1: y, y2: y, stroke: "currentColor", "stroke-opacity": 0.12 }));
+    const t = s("text", { x: 0, y: y + 4 }); t.textContent = Math.round(max * g / 4 / 100) / 10 + "k"; svg.append(t);
+  }
+  data.forEach((d, i) => {
+    const x = pad + i * slot + slot / 2;
+    const ih = (H - 10) * d.income / max, eh = (H - 10) * d.expenses / max;
+    const r1 = s("rect", { x: x - bw - 1, y: H - ih, width: bw, height: ih, rx: 3, fill: "var(--income)" });
+    const r2 = s("rect", { x: x + 1, y: H - eh, width: bw, height: eh, rx: 3, fill: "var(--expense)" });
+    const tip = s("title"); tip.textContent = `${d.month}: entrate ${euro.format(d.income)}, uscite ${euro.format(d.expenses)}, risparmio ${euro.format(d.saved)}`;
+    const grp = s("g"); grp.append(r1, r2, tip); svg.append(grp);
+    const t = s("text", { x, y: H + 16, "text-anchor": "middle" }); t.textContent = d.month.slice(5) + "/" + d.month.slice(2, 4); svg.append(t);
+  });
+  $("trend").replaceChildren(svg);
+}
+
+async function loadSummary() {
+  const sum = await api("/api/summary?month=" + encodeURIComponent($("month").value));
+  const max = Math.max(1, ...sum.by_category.map((c) => c.amount));
+  $("cats").replaceChildren(...(sum.by_category.length ? sum.by_category.map((c) => h("div", { class: "row" },
+    h("span", { class: "name" }, c.category), h("span", { class: "amt" }, `${euro.format(c.amount)} · ${Math.round(c.share * 100)}%`),
+    bar(c.amount / max, null))) : [h("p", { class: "empty" }, "Nessuna spesa in questo mese.")]));
+  $("savings").textContent = `Entrate ${euro.format(sum.income)} · uscite ${euro.format(sum.expenses)} · risparmiato ${euro.format(sum.saved)}` +
+    (sum.savings_rate != null ? ` (${Math.round(sum.savings_rate * 100)}%)` : "");
+}
+
+async function loadRecurring() {
+  const list = (await api("/api/recurring")).filter((r) => r.active);
+  const cad = { week: "sett.", month: "mese", year: "anno" };
+  const total = list.reduce((a, r) => a + r.monthly_equivalent, 0);
+  $("recurring").replaceChildren(...(list.length ? [
+    ...list.map((r) => h("div", { class: "row" },
+      h("span", { class: "name" }, r.merchant + (r.planned ? "" : " · non pianificata")),
+      h("span", { class: "amt" }, `${euro.format(r.typical_amount)}/${cad[r.cadence]}`))),
+    h("p", { class: "small" }, `Totale ricorrente ≈ ${euro.format(total)} al mese`)] :
+    [h("p", { class: "empty" }, "Nessuna spesa ricorrente rilevata (servono almeno 3 mesi di dati).")]));
+}
+
+async function loadTxs() {
+  const p = new URLSearchParams({ limit: "100" });
+  if ($("q").value.trim()) p.set("text", $("q").value.trim());
+  if ($("fcat").value) p.set("category", $("fcat").value);
+  if ($("unc").checked) p.set("uncategorized_only", "true");
+  const txs = await api("/api/transactions?" + p);
+  $("txs").replaceChildren(...(txs.length ? txs.map((t) => {
+    const sel = h("select", { class: "cat", "aria-label": "Categoria" }, h("option", { value: "" }, "—"),
+      ...categories.map((c) => h("option", { value: c.name }, c.name)));
+    sel.value = t.category || "";
+    sel.addEventListener("change", async () => {
+      if (!sel.value) return;
+      const learn = confirm(`Usare "${sel.value}" anche per le prossime transazioni di "${t.merchant}"?`);
+      try { await api("/api/categorize", { transaction_ids: [t.id], category: sel.value, learn_rule: learn }); refresh(); }
+      catch (e) { alert(e.message); }
+    });
+    return h("tr", {},
+      h("td", {}, new Date(t.date).toLocaleDateString("it-IT")),
+      h("td", {}, h("div", {}, t.merchant || t.counterparty || "—"), h("div", { class: "desc" }, t.description || ""),
+        t.amortized_months ? h("div", { class: "desc" }, `ammortizzata in ${t.amortized_months} mesi`) : null),
+      h("td", {}, sel),
+      h("td", { class: "num" + (t.amount > 0 ? " pos" : "") }, euro.format(t.amount)));
+  }) : [h("tr", {}, h("td", { colspan: 4, class: "empty" }, "Nessuna transazione."))]));
+}
+
+async function refresh() {
+  try {
+    await Promise.all([loadStatus(), loadSinking(), loadTrend(), loadSummary(), loadRecurring(), loadTxs()]);
+  } catch (e) {
+    document.querySelector("main").prepend(h("section", { class: "err" }, "Errore: " + e.message));
+  }
+}
+
+(async function init() {
+  categories = await api("/api/categories");
+  $("fcat").append(...categories.map((c) => h("option", { value: c.name }, c.name)));
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    $("month").append(h("option", { value: v }, d.toLocaleDateString("it-IT", { month: "long", year: "numeric" })));
+  }
+  $("month").addEventListener("change", loadSummary);
+  let timer;
+  $("q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(loadTxs, 250); });
+  $("fcat").addEventListener("change", loadTxs);
+  $("unc").addEventListener("change", loadTxs);
+  refresh();
+})();
+</script>
+</body>
+</html>
