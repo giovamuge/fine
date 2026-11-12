@@ -1,6 +1,6 @@
 {
   "name": "fine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Finanza personale sui tuoi conti (Enable Banking, sola lettura): quanto puoi spendere, budget, tag, saldo. Dati solo in locale.",
   "author": { "name": "giovamuge" },
   "homepage": "https://github.com/giovamuge/fine",

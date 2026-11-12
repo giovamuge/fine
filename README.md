@@ -91,7 +91,7 @@ Poi chiedi per esempio:
 - *"Tagga come vacanza-londra tutte le spese dal 1 al 7 agosto e dimmi quanto è costata"*
 - *"Come è cambiato il mio saldo negli ultimi 3 mesi?"*
 
-**Strumenti disponibili:** `status`, `list_accounts`, `sync`, `search_transactions`, `monthly_summary`, `trend`, `list_uncategorized`, `categorize`, `list_categories`, `upsert_category`, `list_rules`, `delete_rule`, `set_budget`, `budget_status`, `recurring`, `upsert_planned`, `delete_planned`, `list_planned`, `sinking_funds`, `amortize`, `set_savings_goal`, `tag_transactions`, `untag_transactions`, `list_tags`, `delete_tag`, `balance_history`.
+**Strumenti disponibili:** `status`, `list_accounts`, `sync`, `search_transactions`, `monthly_summary`, `trend`, `list_uncategorized`, `categorize`, `list_categories`, `upsert_category`, `update_category`, `delete_category`, `list_rules`, `delete_rule`, `set_budget`, `budget_status`, `recurring`, `upsert_planned`, `delete_planned`, `list_planned`, `sinking_funds`, `amortize`, `set_savings_goal`, `tag_transactions`, `untag_transactions`, `list_tags`, `delete_tag`, `balance_history`.
 
 ## 3. Dashboard
 
@@ -110,11 +110,12 @@ fine serve --bind 0.0.0.0:7878   # raggiungibile come http://<nome-mac>:7878 nel
 
 Su un indirizzo diverso da localhost `fine` si rifiuta di partire senza password. Non esporlo direttamente su Internet.
 
-La dashboard è pensata per il telefono (barra di navigazione in basso, finestre a scorrimento dal basso) ma sta bene anche sul desktop; segue il tema chiaro/scuro del sistema (con un interruttore per forzarlo), è navigabile da tastiera e non fa nessuna richiesta esterna: tutto è incorporato nell'eseguibile. Quattro sezioni:
+La dashboard è fatta con React e [shadcn/ui](https://ui.shadcn.com); è pensata per il telefono (barra di navigazione in basso, finestre a scorrimento dal basso) ma sta bene anche sul desktop; segue il tema chiaro/scuro del sistema (con un interruttore per forzarlo), è navigabile da tastiera e non fa nessuna richiesta esterna: tutto è incorporato nell'eseguibile. Cinque sezioni:
 
 - **Panoramica**: il "disponibile" del mese in evidenza, con settimana e giorno, la barra del ritmo di spesa (la tacca indica dove dovresti essere oggi), gli avvisi (una sincronizzazione fallita è impossibile da non vedere), il saldo con andamento e variazioni a 7/30/90/365 giorni, i budget più vicini al limite.
 - **Movimenti**: ricerca istantanea, filtri per periodo, categoria, tag e "da categorizzare" (tutti nell'indirizzo, quindi condivisibili e raggiungibili con "indietro"); categoria modificabile direttamente nella riga; dettaglio di ogni movimento con la scelta esplicita *"usa questa categoria anche per i prossimi movimenti di questo esercente"*, tag con suggerimenti (e regola automatica opzionale), ammortamento su N mesi; selezione multipla per categorizzare o taggare molti movimenti in un colpo.
 - **Analisi**: spese per categoria del mese (ogni riga porta ai movimenti), entrate/uscite degli ultimi 12 mesi, saldo nel tempo con tooltip e vista tabella, budget, accantonamenti per le spese annuali, totali per tag per periodo, spese ricorrenti.
+- **Categorie**: 35 categorie predefinite (spese, entrate, giroconti, risparmio) tutte personalizzabili: nome, tipo, icona (qualsiasi emoji) e colore; per ognuna le regole automatiche che la assegnano, eliminabili una per una. Una categoria si elimina spostando movimenti, regole e budget in un'altra (unione) oppure lasciandoli da categorizzare: l'AI ci riproverà. Una nuova categoria si crea anche al volo dal selettore dei movimenti.
 - **Conti**: una scheda per conto con saldo, IBAN, scadenza del consenso (avviso da 14 giorni), esito dell'ultima sincronizzazione con il dettaglio dell'errore; collegamento di una nuova banca guidato in quattro passi (scegli, autorizza sulla pagina della banca, incolla l'indirizzo finale, fatto), **rinnovo del consenso** (lo storico resta, senza duplicati), rinomina, rimozione con conferma esplicita (cancella i movimenti del conto da questo computer; il consenso viene revocato presso la banca se non serve ad altri conti) e "Sincronizza ora" con il riepilogo del risultato.
 
 Le descrizioni che arrivano dalla banca sono sempre mostrate come testo, mai interpretate come HTML; gli script sono serviti solo dall'eseguibile (`Content-Security-Policy: script-src 'self'`).
@@ -171,7 +172,7 @@ entrate del mese (ricevute + attese)
 cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
-**Frontend.** La dashboard è un'app React + TypeScript (Vite) in `web/`. Per compilare `fine` serve anche **Node.js (LTS) con npm**: `build.rs` esegue da solo `npm ci` e `npm run build` quando i sorgenti in `web/` cambiano e il risultato (`web/dist`, ignorato da git) viene incorporato nell'eseguibile. Senza Node si può comunque compilare con `FINE_SKIP_WEB_BUILD=1` (la dashboard mostra una pagina segnaposto; CLI e MCP non cambiano).
+**Frontend.** La dashboard è un'app React + TypeScript (Vite, Tailwind CSS 4, componenti [shadcn/ui](https://ui.shadcn.com) in `web/src/components/ui`, aggiungibili con `npx shadcn@latest add <nome>`) in `web/`. Per compilare `fine` serve anche **Node.js (LTS) con npm**: `build.rs` esegue da solo `npm ci` e `npm run build` quando i sorgenti in `web/` cambiano e il risultato (`web/dist`, ignorato da git) viene incorporato nell'eseguibile. Senza Node si può comunque compilare con `FINE_SKIP_WEB_BUILD=1` (la dashboard mostra una pagina segnaposto; CLI e MCP non cambiano).
 
 Per lavorare sul frontend con ricarica immediata:
 

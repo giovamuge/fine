@@ -178,37 +178,207 @@ fn valid_date(s: &str) -> Result<NaiveDate> {
 pub struct CategoryView {
     pub name: String,
     pub kind: String,
+    pub icon: Option<String>,
+    pub color: Option<String>,
     pub transactions: i64,
+    pub rules: i64,
 }
 
 pub fn list_categories(conn: &Connection) -> Result<Vec<CategoryView>> {
     let mut st = conn.prepare(
-        "SELECT c.name, c.kind, (SELECT COUNT(*) FROM transactions t WHERE t.category_id = c.id)
+        "SELECT c.name, c.kind, c.icon, c.color,
+                (SELECT COUNT(*) FROM transactions t WHERE t.category_id = c.id),
+                (SELECT COUNT(*) FROM rules r WHERE r.category_id = c.id)
          FROM categories c ORDER BY c.kind, c.name",
     )?;
     let rows = st.query_map([], |r| {
         Ok(CategoryView {
             name: r.get(0)?,
             kind: r.get(1)?,
-            transactions: r.get(2)?,
+            icon: r.get(2)?,
+            color: r.get(3)?,
+            transactions: r.get(4)?,
+            rules: r.get(5)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// Colors the dashboard knows how to draw.
+pub const CATEGORY_COLORS: &[&str] = &[
+    "slate", "red", "orange", "amber", "lime", "green", "teal", "sky", "blue", "indigo", "violet",
+    "pink",
+];
+
+fn check_kind(kind: &str) -> Result<()> {
+    if !matches!(kind, "expense" | "income" | "transfer" | "saving") {
+        bail!("tipo non valido: usa expense, income, transfer o saving");
+    }
+    Ok(())
+}
+
+/// Empty clears the value; anything else must be a short symbol (an emoji) / a known color.
+fn clean_icon(icon: &str) -> Result<Option<String>> {
+    let icon = icon.trim();
+    if icon.chars().count() > 8 {
+        bail!("icona troppo lunga: usa un'emoji");
+    }
+    Ok((!icon.is_empty()).then(|| icon.to_string()))
+}
+
+fn clean_color(color: &str) -> Result<Option<String>> {
+    let color = color.trim();
+    if color.is_empty() {
+        return Ok(None);
+    }
+    if !CATEGORY_COLORS.contains(&color) {
+        bail!(
+            "colore non valido: usa uno tra {}",
+            CATEGORY_COLORS.join(", ")
+        );
+    }
+    Ok(Some(color.to_string()))
+}
+
+/// Create a category, or change the kind of an existing one.
 pub fn upsert_category(conn: &Connection, name: &str, kind: &str) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         bail!("nome categoria vuoto");
     }
-    if !matches!(kind, "expense" | "income" | "transfer" | "saving") {
-        bail!("tipo non valido: usa expense, income, transfer o saving");
-    }
+    check_kind(kind)?;
+    let created = db::category_id(conn, name).is_err();
     conn.execute(
         "INSERT INTO categories (name, kind) VALUES (?1, ?2) ON CONFLICT(name) DO UPDATE SET kind = excluded.kind",
         params![name, kind],
     )?;
+    if created {
+        // A new category may fit what the AI could not place before.
+        conn.execute(
+            "UPDATE transactions SET ai_checked_at = NULL WHERE category_id IS NULL",
+            [],
+        )?;
+    }
     Ok(())
+}
+
+/// Changes to a category; `None` leaves the field as it is, an empty icon/color clears it.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct CategoryPatch {
+    /// New name
+    pub rename: Option<String>,
+    /// "expense", "income", "transfer" or "saving"
+    pub kind: Option<String>,
+    /// An emoji ("" clears it)
+    pub icon: Option<String>,
+    /// One of slate, red, orange, amber, lime, green, teal, sky, blue, indigo, violet, pink ("" clears it)
+    pub color: Option<String>,
+}
+
+pub fn update_category(conn: &Connection, name: &str, patch: &CategoryPatch) -> Result<()> {
+    let id = db::category_id(conn, name)?;
+    if let Some(new) = patch.rename.as_deref().map(str::trim) {
+        if new.is_empty() {
+            bail!("nome categoria vuoto");
+        }
+        if db::category_id(conn, new).is_ok_and(|other| other != id) {
+            bail!(
+                "esiste già una categoria {new:?}: per unirle elimina questa spostando i movimenti lì"
+            );
+        }
+        conn.execute(
+            "UPDATE categories SET name = ?1 WHERE id = ?2",
+            params![new, id],
+        )?;
+    }
+    if let Some(kind) = &patch.kind {
+        check_kind(kind)?;
+        conn.execute(
+            "UPDATE categories SET kind = ?1 WHERE id = ?2",
+            params![kind, id],
+        )?;
+    }
+    if let Some(icon) = &patch.icon {
+        conn.execute(
+            "UPDATE categories SET icon = ?1 WHERE id = ?2",
+            params![clean_icon(icon)?, id],
+        )?;
+    }
+    if let Some(color) = &patch.color {
+        conn.execute(
+            "UPDATE categories SET color = ?1 WHERE id = ?2",
+            params![clean_color(color)?, id],
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteCategoryOutcome {
+    /// Transactions moved to `move_to`, or left without a category.
+    pub transactions: i64,
+    pub moved_to: Option<String>,
+}
+
+/// Delete a category. With `move_to` its transactions, rules, budgets and planned items move
+/// there (a merge); without, transactions become uncategorized (and the AI may look at them
+/// again) while its rules and budgets are deleted.
+pub fn delete_category(
+    conn: &mut Connection,
+    name: &str,
+    move_to: Option<&str>,
+) -> Result<DeleteCategoryOutcome> {
+    let id = db::category_id(conn, name)?;
+    let target = match move_to.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(m) => {
+            let t = db::category_id(conn, m)?;
+            if t == id {
+                bail!("non puoi spostare i movimenti nella stessa categoria");
+            }
+            Some((t, m.to_string()))
+        }
+        None => None,
+    };
+    let tx = conn.transaction()?;
+    let transactions: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM transactions WHERE category_id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    match &target {
+        Some((t, _)) => {
+            tx.execute(
+                "UPDATE transactions SET category_id = ?1 WHERE category_id = ?2",
+                params![t, id],
+            )?;
+            tx.execute(
+                "UPDATE rules SET category_id = ?1 WHERE category_id = ?2",
+                params![t, id],
+            )?;
+            // The target's own budget wins where both have one for the same period.
+            tx.execute(
+                "UPDATE OR IGNORE budgets SET category_id = ?1 WHERE category_id = ?2",
+                params![t, id],
+            )?;
+            tx.execute(
+                "UPDATE planned SET category_id = ?1 WHERE category_id = ?2",
+                params![t, id],
+            )?;
+        }
+        None => {
+            tx.execute(
+                "UPDATE transactions SET category_id = NULL, categorized_by = NULL, ai_checked_at = NULL
+                 WHERE category_id = ?1",
+                [id],
+            )?;
+        }
+    }
+    tx.execute("DELETE FROM categories WHERE id = ?1", [id])?;
+    tx.commit()?;
+    Ok(DeleteCategoryOutcome {
+        transactions,
+        moved_to: target.map(|(_, n)| n),
+    })
 }
 
 /// Set a budget for a category and period; amount 0 removes it.
@@ -331,4 +501,88 @@ pub fn set_savings_goal(conn: &Connection, cents: i64) -> Result<()> {
         bail!("obiettivo negativo");
     }
     db::set_setting(conn, "savings_goal_cents", &cents.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tx(conn: &Connection, key: &str, category: &str) {
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (uid, name, currency) VALUES ('a', 'Conto', 'EUR')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_uid, booking_date, amount_cents, currency, merchant, dedup_key, category_id)
+             VALUES ('a', '2026-03-01', -1000, 'EUR', 'x', ?1, (SELECT id FROM categories WHERE name = ?2))",
+            params![key, category],
+        )
+        .unwrap();
+    }
+
+    fn count(conn: &Connection, category: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id = t.category_id WHERE c.name = ?1",
+            [category],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn categories_are_customizable_and_mergeable() {
+        let mut conn = db::open_in_memory().unwrap();
+        let cats = list_categories(&conn).unwrap();
+        assert!(
+            cats.iter()
+                .any(|c| c.name == "Affitto e mutuo" && c.icon.is_some())
+        );
+
+        upsert_category(&conn, "Bici", "expense").unwrap();
+        let patch = CategoryPatch {
+            rename: Some("Bicicletta".into()),
+            icon: Some("🚲".into()),
+            color: Some("teal".into()),
+            ..Default::default()
+        };
+        update_category(&conn, "bici", &patch).unwrap();
+        let bike = list_categories(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "Bicicletta")
+            .unwrap();
+        assert_eq!(
+            (bike.icon.as_deref(), bike.color.as_deref()),
+            (Some("🚲"), Some("teal"))
+        );
+        let bad = CategoryPatch {
+            color: Some("#ff0000".into()),
+            ..Default::default()
+        };
+        assert!(update_category(&conn, "Bicicletta", &bad).is_err());
+        let clash = CategoryPatch {
+            rename: Some("svago".into()),
+            ..Default::default()
+        };
+        assert!(update_category(&conn, "Bicicletta", &clash).is_err());
+
+        tx(&conn, "1", "Bicicletta");
+        tx(&conn, "2", "Bicicletta");
+        set_budget(&conn, "Bicicletta", "month", 5000).unwrap();
+        let out = delete_category(&mut conn, "Bicicletta", Some("Sport e benessere")).unwrap();
+        assert_eq!(out.transactions, 2);
+        assert_eq!(count(&conn, "Sport e benessere"), 2);
+        let budgets: i64 = conn
+            .query_row("SELECT COUNT(*) FROM budgets b JOIN categories c ON c.id = b.category_id WHERE c.name = 'Sport e benessere'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(budgets, 1);
+
+        let out = delete_category(&mut conn, "Sport e benessere", None).unwrap();
+        assert_eq!(out.transactions, 2);
+        let uncategorized: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions WHERE category_id IS NULL AND ai_checked_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(uncategorized, 2);
+    }
 }

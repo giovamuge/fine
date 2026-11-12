@@ -1,26 +1,41 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { api, errorMessage } from "../lib/api";
-import { useApp } from "../lib/app-state";
-import { useAsync } from "../lib/useAsync";
-import { useToast } from "../lib/toast";
-import { href, navigate, useRoute } from "../lib/router";
-import { euro, fmtDay, integer, iso, money, plural, signed } from "../lib/format";
-import { Empty, Loaded } from "../components/States";
-import { Icon } from "../components/Icon";
-import { TagChips } from "../components/TagInput";
-import { TxDetail } from "../components/TxDetail";
-import { BulkDialog } from "../components/BulkDialog";
-import type { TxView } from "../lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarRange, CheckSquare, Hash, Search, Shapes, Tag, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { BulkDialog } from "@/components/BulkDialog";
+import { CategoryPicker } from "@/components/CategoryPicker";
+import { PageHeader } from "@/components/PageHeader";
+import { Empty, Loaded } from "@/components/States";
+import { TagChips } from "@/components/TagInput";
+import { TxDetail } from "@/components/TxDetail";
+import { api, errorMessage } from "@/lib/api";
+import { useApp } from "@/lib/app-state";
+import { CategoryIcon } from "@/lib/categories";
+import { euro, fmtDay, integer, iso, plural, signed } from "@/lib/format";
+import { href, navigate, useRoute } from "@/lib/router";
+import { useToast } from "@/lib/toast";
+import type { TxView } from "@/lib/types";
+import { useAsync } from "@/lib/useAsync";
+import { cn } from "@/lib/utils";
 
 type Period = "month" | "30" | "90" | "year" | "all" | "custom";
 const PERIODS: { id: Period; label: string }[] = [
-  { id: "month", label: "Questo mese" },
-  { id: "30", label: "30 giorni" },
+  { id: "month", label: "Mese" },
+  { id: "30", label: "30 gg" },
   { id: "90", label: "3 mesi" },
   { id: "year", label: "Anno" },
   { id: "all", label: "Tutto" },
+  { id: "custom", label: "Date" },
 ];
 const LIMITS = [100, 250, 500];
+const MAX = LIMITS[LIMITS.length - 1] ?? 500;
 
 function rangeFor(p: Period, from: string, to: string): { from?: string; to?: string } {
   const now = new Date();
@@ -41,10 +56,9 @@ function rangeFor(p: Period, from: string, to: string): { from?: string; to?: st
 }
 
 export function Movimenti() {
-  const { version, categories, refresh } = useApp();
+  const { version, refresh } = useApp();
   const toast = useToast();
-  const route = useRoute();
-  const q = route.query;
+  const q = useRoute().query;
 
   // Filters live in the URL: links from Analisi and the browser back button just work.
   const text = q.get("q") ?? "";
@@ -148,131 +162,156 @@ export function Movimenti() {
     return out;
   }, [txs.data]);
 
-  const accountsInList = useMemo(() => new Set((txs.data ?? []).map((t) => t.account)).size, [txs.data]);
+  const multiAccount = useMemo(() => new Set((txs.data ?? []).map((t) => t.account)).size > 1, [txs.data]);
   const anyFilter = !!(text || category || tag || uncategorized || period !== "all");
   const tagNames = (tags.data ?? []).map((t) => t.name);
 
   return (
     <>
-      <header className="page-head">
-        <div>
-          <h1>Movimenti</h1>
-          <p className="sub">{txs.data ? `${plural(txs.data.length, "movimento", "movimenti")}${txs.data.length >= limit ? " (i più recenti)" : ""}` : " "}</p>
-        </div>
-        <div className="inline">
-          <button type="button" className="btn sm" aria-pressed={selecting} onClick={() => { setSelecting((v) => !v); setSelected(new Set()); }}>
-            <Icon name="check" size={15} /> {selecting ? "Fine selezione" : "Seleziona"}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Movimenti"
+        description={txs.data ? `${plural(txs.data.length, "movimento", "movimenti")}${txs.data.length >= limit ? " (i più recenti)" : ""}` : " "}
+        actions={
+          <Button
+            variant={selecting ? "secondary" : "outline"}
+            size="sm"
+            onClick={() => {
+              setSelecting((v) => !v);
+              setSelected(new Set());
+            }}
+          >
+            <CheckSquare /> {selecting ? "Fine selezione" : "Seleziona"}
+          </Button>
+        }
+      />
 
-      <section className="card" aria-label="Filtri">
-        <div className="tx-toolbar">
-          <div className="search">
-            <Icon name="search" size={18} />
-            <input type="search" className="input" placeholder="Cerca esercente, descrizione o controparte" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Cerca nei movimenti" />
-          </div>
-          <div className="pills" role="group" aria-label="Periodo">
-            {PERIODS.map((p) => (
-              <button key={p.id} type="button" className="pill" aria-pressed={period === p.id} onClick={() => setParams({ period: p.id === "all" ? undefined : p.id })}>
-                {p.label}
-              </button>
-            ))}
-            <button type="button" className="pill" aria-pressed={period === "custom"} onClick={() => setParams({ period: "custom", from: from || iso(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)), to: to || iso(new Date()) })}>
-              <Icon name="calendar" size={13} /> Date…
-            </button>
+      <Card className="gap-3 py-4">
+        <CardContent className="flex flex-col gap-3 px-4">
+          <InputGroup>
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput type="search" placeholder="Cerca esercente, descrizione o controparte" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Cerca nei movimenti" />
+          </InputGroup>
+          <div className="-mx-4 overflow-x-auto px-4">
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={period}
+              onValueChange={(v) => {
+                if (!v) return;
+                if (v === "custom") setParams({ period: "custom", from: from || iso(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)), to: to || iso(new Date()) });
+                else setParams({ period: v === "all" ? undefined : v });
+              }}
+              aria-label="Periodo"
+            >
+              {PERIODS.map((p) => (
+                <ToggleGroupItem key={p.id} value={p.id} className="px-3">
+                  {p.id === "custom" && <CalendarRange />}
+                  {p.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
           {period === "custom" && (
-            <div className="inline">
-              <label className="small muted" htmlFor="f-from">Dal</label>
-              <input id="f-from" type="date" className="input sm" value={from} max={to || undefined} onChange={(e) => setParams({ period: "custom", from: e.target.value })} />
-              <label className="small muted" htmlFor="f-to">al</label>
-              <input id="f-to" type="date" className="input sm" value={to} min={from || undefined} onChange={(e) => setParams({ period: "custom", to: e.target.value })} />
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Dal</span>
+              <Input type="date" className="w-auto" value={from} max={to || undefined} onChange={(e) => setParams({ period: "custom", from: e.target.value })} aria-label="Dal" />
+              <span className="text-muted-foreground">al</span>
+              <Input type="date" className="w-auto" value={to} min={from || undefined} onChange={(e) => setParams({ period: "custom", to: e.target.value })} aria-label="Al" />
             </div>
           )}
-          <div className="tx-filters">
-            <select className="select sm" value={category} onChange={(e) => setParams({ category: e.target.value || undefined })} aria-label="Categoria">
-              <option value="">Tutte le categorie</option>
-              {categories.map((c) => (
-                <option key={c.name} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-            <select className="select sm" value={tag} onChange={(e) => setParams({ tag: e.target.value || undefined })} aria-label="Tag">
-              <option value="">Tutti i tag</option>
-              {tagNames.map((t) => (
-                <option key={t} value={t}>#{t}</option>
-              ))}
-            </select>
-            <button type="button" className="pill" aria-pressed={uncategorized} onClick={() => setParams({ uncategorized: uncategorized ? undefined : "1" })}>
-              Da categorizzare
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <CategoryPicker value={category} onChange={(c) => setParams({ category: c || undefined })} allowNone noneLabel="Tutte le categorie" className="h-8 w-auto min-w-44" ariaLabel="Filtra per categoria" />
+            <Select value={tag || "__all"} onValueChange={(v) => setParams({ tag: v === "__all" ? undefined : v })}>
+              <SelectTrigger size="sm" className="min-w-36" aria-label="Filtra per tag">
+                <Hash className="opacity-60" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Tutti i tag</SelectItem>
+                {tagNames.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Toggle variant="outline" size="sm" pressed={uncategorized} onPressedChange={(p) => setParams({ uncategorized: p ? "1" : undefined })}>
+              <Shapes /> Da categorizzare
+            </Toggle>
             {anyFilter && (
-              <button type="button" className="btn sm ghost" onClick={() => { setSearch(""); navigate("/movimenti", { replace: true }); }}>
-                <Icon name="x" size={14} /> Azzera filtri
-              </button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  navigate("/movimenti", { replace: true });
+                }}
+              >
+                <X /> Azzera filtri
+              </Button>
             )}
           </div>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      <section className="card" aria-label="Elenco movimenti">
-        <Loaded {...txs} rows={8}>
-          {(list) =>
-            list.length === 0 ? (
-              <Empty title={anyFilter ? "Nessun movimento con questi filtri." : "Nessun movimento ancora."}>
-                {anyFilter ? "Prova ad allargare il periodo o ad azzerare i filtri." : "Collega un conto dalla sezione Conti e sincronizza."}
-              </Empty>
-            ) : (
-              <div className="tx-list">
-                {groups.map((g) => (
-                  <div key={g.date}>
-                    <div className="tx-day">
-                      <span>{fmtDay(g.date)}</span>
-                      <span className="num" style={{ textTransform: "none", letterSpacing: 0 }}>{signed(g.total)}</span>
-                    </div>
-                    {g.items.map((t) => (
-                      <TxRow
-                        key={t.id}
-                        t={t}
-                        selecting={selecting}
-                        selected={selected.has(t.id)}
-                        onToggle={() => toggle(t.id)}
-                        onOpen={() => setDetail(t)}
-                        showAccount={accountsInList > 1}
-                        categories={categories.map((c) => c.name)}
-                        onQuickCategory={(c) => quickCategorize(t, c)}
-                      />
-                    ))}
+      <Loaded {...txs} rows={8}>
+        {(list) =>
+          list.length === 0 ? (
+            <Empty title={anyFilter ? "Nessun movimento con questi filtri." : "Nessun movimento ancora."}>
+              {anyFilter ? "Prova ad allargare il periodo o ad azzerare i filtri." : "Collega un conto dalla sezione Conti e sincronizza."}
+            </Empty>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {groups.map((g) => (
+                <section key={g.date} aria-label={fmtDay(g.date)}>
+                  <div className="flex items-center justify-between px-1 pb-1.5 text-xs font-medium text-muted-foreground">
+                    <span className="first-letter:uppercase">{fmtDay(g.date)}</span>
+                    <span className="tabular">{signed(g.total)}</span>
                   </div>
-                ))}
-                {list.length >= limit && limit < (LIMITS[LIMITS.length - 1] ?? 500) && (
-                  <div style={{ paddingTop: 14, display: "flex", justifyContent: "center" }}>
-                    <button type="button" className="btn" onClick={() => setLimit(LIMITS.find((l) => l > limit) ?? limit)}>
-                      Mostra altri movimenti
-                    </button>
-                  </div>
-                )}
-                {list.length >= (LIMITS[LIMITS.length - 1] ?? 500) && (
-                  <p className="small muted" style={{ paddingTop: 12, textAlign: "center" }}>Mostrati i primi 500: restringi il periodo o cerca per vedere il resto.</p>
-                )}
-              </div>
-            )
-          }
-        </Loaded>
-      </section>
+                  <Card className="gap-0 py-1">
+                    <ul className="divide-y">
+                      {g.items.map((t) => (
+                        <TxRow
+                          key={t.id}
+                          t={t}
+                          selecting={selecting}
+                          selected={selected.has(t.id)}
+                          onToggle={() => toggle(t.id)}
+                          onOpen={() => setDetail(t)}
+                          showAccount={multiAccount}
+                          onQuickCategory={(c) => quickCategorize(t, c)}
+                        />
+                      ))}
+                    </ul>
+                  </Card>
+                </section>
+              ))}
+              {list.length >= limit && limit < MAX && (
+                <Button variant="outline" className="self-center" onClick={() => setLimit(LIMITS.find((l) => l > limit) ?? limit)}>
+                  Mostra altri movimenti
+                </Button>
+              )}
+              {list.length >= MAX && <p className="text-center text-sm text-muted-foreground">Mostrati i primi {MAX}: restringi il periodo o cerca per vedere il resto.</p>}
+            </div>
+          )
+        }
+      </Loaded>
 
       {selecting && selected.size > 0 && (
-        <div className="bulkbar" role="region" aria-label="Azioni sui movimenti selezionati">
-          <strong>{integer(selected.size)} selezionati</strong>
-          <button type="button" className="btn sm" onClick={() => setBulk("categorize")}>
-            Categoria…
-          </button>
-          <button type="button" className="btn sm" onClick={() => setBulk("tag")}>
-            <Icon name="tag" size={14} /> Tag…
-          </button>
-          <button type="button" className="btn sm" onClick={() => setSelected(new Set())} aria-label="Annulla selezione">
-            <Icon name="x" size={14} />
-          </button>
+        <div role="region" aria-label="Azioni sui movimenti selezionati" className="fixed inset-x-4 bottom-20 z-40 mx-auto flex max-w-md items-center gap-2 rounded-2xl border bg-popover p-2 pl-4 shadow-lg md:bottom-6">
+          <span className="flex-1 text-sm font-medium">{integer(selected.size)} selezionati</span>
+          <Button size="sm" variant="secondary" onClick={() => setBulk("categorize")}>
+            <Shapes /> Categoria
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setBulk("tag")}>
+            <Tag /> Tag
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => setSelected(new Set())} aria-label="Annulla selezione">
+            <X />
+          </Button>
         </div>
       )}
 
@@ -298,7 +337,6 @@ function TxRow({
   onToggle,
   onOpen,
   showAccount,
-  categories,
   onQuickCategory,
 }: {
   t: TxView;
@@ -307,59 +345,40 @@ function TxRow({
   onToggle: () => void;
   onOpen: () => void;
   showAccount: boolean;
-  categories: string[];
   onQuickCategory: (c: string) => void;
 }) {
+  const { categoryByName } = useApp();
   const title = t.merchant || t.counterparty || "Movimento";
-  const onSelect = (e: ChangeEvent<HTMLSelectElement>) => onQuickCategory(e.target.value);
+  const cat = t.category ? categoryByName.get(t.category.toLowerCase()) : undefined;
   return (
-    <div
-      className={`tx${selected ? " selected" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={() => (selecting ? onToggle() : onOpen())}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          if (selecting) onToggle();
-          else onOpen();
-        }
-      }}
-      aria-label={`${title}, ${money(t.amount, "EUR")}, ${t.category ?? "da categorizzare"}`}
-    >
+    <li className={cn("flex items-center gap-3 px-3 py-2.5 transition-colors", selected && "bg-muted")}>
+      {selecting && <Checkbox checked={selected} onCheckedChange={onToggle} aria-label={`Seleziona ${title}`} />}
       {selecting ? (
-        <input type="checkbox" className="sel" checked={selected} onChange={onToggle} onClick={(e) => e.stopPropagation()} aria-label={`Seleziona ${title}`} tabIndex={-1} />
+        <CategoryIcon category={cat} />
       ) : (
-        <span className="sel" aria-hidden="true" style={{ width: 4 }} />
+        <CategoryPicker
+          value={t.category ?? ""}
+          onChange={onQuickCategory}
+          trigger={
+            <button type="button" className="rounded-lg focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none" aria-label={`Categoria di ${title}: ${t.category ?? "da categorizzare"}. Cambia`}>
+              <CategoryIcon category={cat} className={cn("transition-transform hover:scale-105", !t.category && "ring-2 ring-warning/60")} />
+            </button>
+          }
+        />
       )}
-      <div className="main">
-        <div className="merchant">{title}</div>
-        <div className="meta">
-          {selecting || categories.length === 0 ? (
-            <span className={`cat${t.category ? "" : " none"}`}>{t.category ?? "Da categorizzare"}</span>
-          ) : (
-            <select
-              className={`select sm cat-inline${t.category ? "" : " none"}`}
-              value={t.category ?? ""}
-              onChange={onSelect}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-              aria-label={`Categoria di ${title}`}
-              style={{ minHeight: 26, padding: "2px 24px 2px 6px", fontSize: 12, width: "auto", color: t.category ? "var(--text-2)" : "var(--warn-text)", fontWeight: 600 }}
-            >
-              <option value="">Da categorizzare</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          )}
-          {t.tags.length > 0 && <TagChips tags={t.tags} small />}
-          {t.amortized_months && <span className="badge neutral">in {t.amortized_months} mesi</span>}
-          {showAccount && <span className="truncate">{t.account}</span>}
-          {t.description && t.description !== t.merchant && <span className="desc">{t.description}</span>}
-        </div>
-      </div>
-      <div className={`amount${t.amount > 0 ? " in" : ""}`}>{t.amount > 0 ? `+${euro(t.amount)}` : euro(t.amount)}</div>
-    </div>
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none" onClick={selecting ? onToggle : onOpen}>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm font-medium">{title}</span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span className={cn(!t.category && "font-medium text-warning")}>{t.category ?? "Da categorizzare"}</span>
+            {t.amortized_months && <Badge variant="outline">in {t.amortized_months} mesi</Badge>}
+            {showAccount && <span className="truncate">· {t.account}</span>}
+            {t.tags.length > 0 && <TagChips tags={t.tags} />}
+          </span>
+          {t.description && t.description !== t.merchant && <span className="line-clamp-1 text-xs text-muted-foreground/80">{t.description}</span>}
+        </span>
+        <span className={cn("tabular shrink-0 text-sm font-medium", t.amount > 0 && "text-positive")}>{t.amount > 0 ? `+${euro(t.amount)}` : euro(t.amount)}</span>
+      </button>
+    </li>
   );
 }

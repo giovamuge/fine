@@ -123,34 +123,48 @@ CREATE TABLE tag_rules (
     // v5: stable account identity across consents (renewing gives new uids) and the bank's country
     "ALTER TABLE accounts ADD COLUMN identification_hash TEXT;
      ALTER TABLE accounts ADD COLUMN country TEXT;",
+    // v6: customizable categories (icon, color); the missing defaults are added by `seed_v6`
+    "ALTER TABLE categories ADD COLUMN icon TEXT;
+     ALTER TABLE categories ADD COLUMN color TEXT;",
 ];
 
-/// Default categories (Italian). (name, kind)
-pub const DEFAULT_CATEGORIES: &[(&str, &str)] = &[
-    ("Spesa alimentare", "expense"),
-    ("Ristoranti e bar", "expense"),
-    ("Trasporti", "expense"),
-    ("Carburante", "expense"),
-    ("Casa", "expense"),
-    ("Utenze", "expense"),
-    ("Telefono e internet", "expense"),
-    ("Abbonamenti", "expense"),
-    ("Salute", "expense"),
-    ("Shopping", "expense"),
-    ("Svago", "expense"),
-    ("Viaggi", "expense"),
-    ("Istruzione", "expense"),
-    ("Regali", "expense"),
-    ("Assicurazioni", "expense"),
-    ("Tasse", "expense"),
-    ("Animali", "expense"),
-    ("Cura personale", "expense"),
-    ("Commissioni bancarie", "expense"),
-    ("Altro", "expense"),
-    ("Stipendio", "income"),
-    ("Altre entrate", "income"),
-    ("Giroconti", "transfer"),
-    ("Risparmi e investimenti", "saving"),
+/// Default categories (Italian). (name, kind, icon)
+pub const DEFAULT_CATEGORIES: &[(&str, &str, &str)] = &[
+    ("Spesa alimentare", "expense", "🛒"),
+    ("Ristoranti e bar", "expense", "🍽️"),
+    ("Trasporti", "expense", "🚆"),
+    ("Carburante", "expense", "⛽"),
+    ("Auto", "expense", "🚗"),
+    ("Casa", "expense", "🏠"),
+    ("Affitto e mutuo", "expense", "🔑"),
+    ("Utenze", "expense", "💡"),
+    ("Telefono e internet", "expense", "📱"),
+    ("Abbonamenti", "expense", "🔁"),
+    ("Salute", "expense", "💊"),
+    ("Sport e benessere", "expense", "🏋️"),
+    ("Cura personale", "expense", "💇"),
+    ("Abbigliamento", "expense", "👕"),
+    ("Elettronica", "expense", "💻"),
+    ("Shopping", "expense", "🛍️"),
+    ("Svago", "expense", "🎬"),
+    ("Viaggi", "expense", "✈️"),
+    ("Istruzione", "expense", "📚"),
+    ("Figli", "expense", "🧸"),
+    ("Animali", "expense", "🐾"),
+    ("Regali", "expense", "🎁"),
+    ("Donazioni", "expense", "🤝"),
+    ("Assicurazioni", "expense", "🛡️"),
+    ("Tasse", "expense", "🧾"),
+    ("Commissioni bancarie", "expense", "🏦"),
+    ("Contanti", "expense", "💶"),
+    ("Lavoro", "expense", "💼"),
+    ("Altro", "expense", "📦"),
+    ("Stipendio", "income", "💰"),
+    ("Rimborsi", "income", "↩️"),
+    ("Interessi e dividendi", "income", "📈"),
+    ("Altre entrate", "income", "➕"),
+    ("Giroconti", "transfer", "🔄"),
+    ("Risparmi e investimenti", "saving", "🐷"),
 ];
 
 /// Seed rules for common Italian merchants. (pattern, category)
@@ -210,6 +224,21 @@ pub const DEFAULT_RULES: &[(&str, &str)] = &[
     ("canone", "Commissioni bancarie"),
     ("stipendio", "Stipendio"),
     ("emolumenti", "Stipendio"),
+    ("prelievo", "Contanti"),
+    ("prelevamento", "Contanti"),
+    ("affitto", "Affitto e mutuo"),
+    ("rata mutuo", "Affitto e mutuo"),
+    ("bollo auto", "Auto"),
+    ("easypark", "Auto"),
+    ("decathlon", "Sport e benessere"),
+    ("mediaworld", "Elettronica"),
+    ("unieuro", "Elettronica"),
+    ("euronics", "Elettronica"),
+    ("zara", "Abbigliamento"),
+    ("primark", "Abbigliamento"),
+    ("h&m", "Abbigliamento"),
+    ("interessi creditori", "Interessi e dividendi"),
+    ("dividend", "Interessi e dividendi"),
 ];
 
 pub fn open(path: &Path) -> Result<Connection> {
@@ -243,6 +272,9 @@ fn init(conn: &mut Connection) -> Result<()> {
         if i == 0 {
             seed(&tx)?;
         }
+        if i == 5 {
+            seed_v6(&tx)?;
+        }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
@@ -250,7 +282,7 @@ fn init(conn: &mut Connection) -> Result<()> {
 }
 
 fn seed(conn: &Connection) -> Result<()> {
-    for (name, kind) in DEFAULT_CATEGORIES {
+    for (name, kind, _) in DEFAULT_CATEGORIES {
         conn.execute(
             "INSERT INTO categories (name, kind) VALUES (?1, ?2)",
             params![name, kind],
@@ -263,6 +295,35 @@ fn seed(conn: &Connection) -> Result<()> {
             params![pattern, cat],
         )?;
     }
+    Ok(())
+}
+
+/// Adds the default categories an older database lacks, gives every default its icon and lets
+/// the AI look again at what it could not place before (the new categories may fit).
+fn seed_v6(conn: &Connection) -> Result<()> {
+    for (name, kind, icon) in DEFAULT_CATEGORIES {
+        conn.execute(
+            "INSERT INTO categories (name, kind) VALUES (?1, ?2) ON CONFLICT(name) DO NOTHING",
+            params![name, kind],
+        )?;
+        conn.execute(
+            "UPDATE categories SET icon = ?2 WHERE name = ?1 AND icon IS NULL",
+            params![name, icon],
+        )?;
+    }
+    for (pattern, cat) in DEFAULT_RULES {
+        conn.execute(
+            "INSERT INTO rules (pattern, category_id, source)
+             SELECT ?1, id, 'seed' FROM categories WHERE name = ?2
+             ON CONFLICT(pattern) DO NOTHING",
+            params![pattern, cat],
+        )?;
+    }
+    crate::categorize::apply_rules(conn)?;
+    conn.execute(
+        "UPDATE transactions SET ai_checked_at = NULL WHERE category_id IS NULL",
+        [],
+    )?;
     Ok(())
 }
 

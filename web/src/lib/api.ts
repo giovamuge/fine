@@ -2,7 +2,11 @@ import type {
   AccountView,
   BalanceHistory,
   CategorizeOutcome,
+  CategoryKind,
+  CategoryPatch,
   CategoryView,
+  DeleteCategoryOutcome,
+  Rule,
   ConnectedAccount,
   MonthSummary,
   PendingConnect,
@@ -83,6 +87,13 @@ export const api = {
   recurring: () => request<Recurring[]>("/api/recurring"),
   sinking: () => request<SinkingFund[]>("/api/sinking"),
   categories: () => request<CategoryView[]>("/api/categories"),
+  createCategory: (name: string, kind: CategoryKind, icon: string, color: string) =>
+    request<null>("/api/categories", { name, kind, icon, color }),
+  updateCategory: (name: string, patch: CategoryPatch) => request<null>("/api/categories/update", { name, ...patch }),
+  deleteCategory: (name: string, move_to?: string) =>
+    request<DeleteCategoryOutcome>("/api/categories/delete", { name, move_to }),
+  rules: () => request<Rule[]>("/api/rules"),
+  deleteRule: (id: number) => request<null>("/api/rules/delete", { id }),
   transactions: (p: SearchParams) =>
     request<TxView[]>(
       `/api/transactions${qs({

@@ -121,6 +121,22 @@ pub struct CategoryArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateCategoryArgs {
+    /// Current category name
+    pub name: String,
+    #[serde(flatten)]
+    pub patch: ops::CategoryPatch,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteCategoryArgs {
+    pub name: String,
+    /// Move its transactions, rules, budgets and planned items to this category (a merge).
+    /// Without it, its transactions become uncategorized.
+    pub move_to: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdArg {
     pub id: i64,
 }
@@ -313,6 +329,33 @@ impl FineServer {
             self.db()
                 .and_then(|c| ops::upsert_category(&c, &a.name, &a.kind))
                 .map(|_| "ok"),
+        )
+    }
+
+    #[tool(
+        description = "Rename a category or change its kind, icon (an emoji) or color. To merge two categories use delete_category with move_to."
+    )]
+    async fn update_category(
+        &self,
+        Parameters(a): Parameters<UpdateCategoryArgs>,
+    ) -> CallToolResult {
+        reply(
+            self.db()
+                .and_then(|c| ops::update_category(&c, &a.name, &a.patch))
+                .map(|_| "ok"),
+        )
+    }
+
+    #[tool(
+        description = "Delete a category. With move_to its transactions, rules and budgets move to that category (merge); otherwise its transactions become uncategorized. Ask the user before deleting."
+    )]
+    async fn delete_category(
+        &self,
+        Parameters(a): Parameters<DeleteCategoryArgs>,
+    ) -> CallToolResult {
+        reply(
+            self.db()
+                .and_then(|mut c| ops::delete_category(&mut c, &a.name, a.move_to.as_deref())),
         )
     }
 

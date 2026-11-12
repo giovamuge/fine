@@ -17,6 +17,7 @@ interface AppState {
   version: number;
   refresh: () => void;
   categories: CategoryView[];
+  categoryByName: Map<string, CategoryView>;
   reloadCategories: () => void;
   sync: SyncState;
   runSync: () => Promise<void>;
@@ -31,12 +32,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [sync, setSync] = useState<SyncState>({ running: false, result: null, error: null, at: null });
   const toast = useToast();
 
-  const refresh = useCallback(() => setVersion((v) => v + 1), []);
-
   const reloadCategories = useCallback(() => {
     api.categories().then(setCategories, () => {});
   }, []);
   useEffect(reloadCategories, [reloadCategories]);
+
+  // Every mutation goes through refresh(): categories may have changed too (counts, names).
+  const refresh = useCallback(() => {
+    setVersion((v) => v + 1);
+    reloadCategories();
+  }, [reloadCategories]);
 
   const runSync = useCallback(async () => {
     setSync((s) => (s.running ? s : { ...s, running: true, error: null }));
@@ -53,15 +58,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       toast.error(`Sincronizzazione fallita: ${error}`);
     } finally {
       refresh();
-      reloadCategories();
     }
-  }, [refresh, reloadCategories, toast]);
+  }, [refresh, toast]);
 
   const clearSyncResult = useCallback(() => setSync((s) => ({ ...s, result: null, error: null })), []);
 
+  const categoryByName = useMemo(() => new Map(categories.map((c) => [c.name.toLowerCase(), c])), [categories]);
+
   const value = useMemo<AppState>(
-    () => ({ version, refresh, categories, reloadCategories, sync, runSync, clearSyncResult }),
-    [version, refresh, categories, reloadCategories, sync, runSync, clearSyncResult],
+    () => ({ version, refresh, categories, categoryByName, reloadCategories, sync, runSync, clearSyncResult }),
+    [version, refresh, categories, categoryByName, reloadCategories, sync, runSync, clearSyncResult],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -73,24 +79,25 @@ export function useApp(): AppState {
 }
 
 // ---------- theme ----------
-export type Theme = "auto" | "light" | "dark";
+export type Theme = "system" | "light" | "dark";
 const THEME_KEY = "fine.theme";
+const dark = () => window.matchMedia("(prefers-color-scheme: dark)");
 
 export function readTheme(): Theme {
   try {
     const t = localStorage.getItem(THEME_KEY);
-    return t === "light" || t === "dark" ? t : "auto";
+    return t === "light" || t === "dark" ? t : "system";
   } catch {
-    return "auto";
+    return "system";
   }
 }
 
 export function applyTheme(t: Theme) {
-  const root = document.documentElement;
-  if (t === "auto") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", t);
+  const isDark = t === "dark" || (t === "system" && dark().matches);
+  document.documentElement.classList.toggle("dark", isDark);
+  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
   try {
-    if (t === "auto") localStorage.removeItem(THEME_KEY);
+    if (t === "system") localStorage.removeItem(THEME_KEY);
     else localStorage.setItem(THEME_KEY, t);
   } catch {
     /* private mode: ignore */
@@ -99,6 +106,13 @@ export function applyTheme(t: Theme) {
 
 export function useTheme(): [Theme, (t: Theme) => void] {
   const [theme, set] = useState<Theme>(readTheme);
-  useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => {
+    applyTheme(theme);
+    if (theme !== "system") return;
+    const mq = dark();
+    const on = () => applyTheme("system");
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [theme]);
   return [theme, set];
 }
