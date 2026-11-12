@@ -1,6 +1,6 @@
 {
   "name": "fine",
-  "description": "fine: finanza personale locale con la tua AI (MCP)",
+  "description": "fine: local personal finance with your own AI (MCP)",
   "owner": {
     "name": "giovamuge"
   },
@@ -8,7 +8,7 @@
     {
       "name": "fine",
       "source": "./",
-      "description": "Finanza personale sui tuoi conti con la tua AI: disponibile, budget, tag, saldo. Dati solo in locale."
+      "description": "Personal finance on your bank accounts with your own AI: left to spend, budgets, tags, balance. Data stays local."
     }
   ]
 }
