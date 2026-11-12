@@ -29,7 +29,7 @@ Come "cervello" usa il tuo abbonamento **Claude** o **ChatGPT** tramite [MCP](ht
 curl -fsSL https://raw.githubusercontent.com/giovamuge/fine/main/install.sh | sh
 ```
 
-Scarica l'ultima release per macOS (Apple Silicon o Intel), ne verifica il checksum e la mette in `~/.local/bin`. Su Linux, o in alternativa, compila dai sorgenti (servono Rust da [rustup.rs](https://rustup.rs) e Node.js per la dashboard):
+Scarica l'ultima release per macOS o Linux (Intel/ARM), ne verifica il checksum e la mette in `~/.local/bin`. In alternativa, compilando dai sorgenti (servono Rust da [rustup.rs](https://rustup.rs) e Node.js per la dashboard):
 
 ```sh
 cargo install --git https://github.com/giovamuge/fine
@@ -183,7 +183,7 @@ cd web && npm install && npm run dev   # Vite su http://localhost:5173, con prox
 
 Se il server Rust ascolta altrove: `FINE_API=http://127.0.0.1:7899 npm run dev`. Controllo dei tipi: `npm run check` (`tsc --noEmit`, anche in CI).
 
-**Release.** Nessuna compilazione su GitHub: allinea la versione in `Cargo.toml` e `.claude-plugin/plugin.json`, poi `scripts/release.sh` compila in locale i binari per macOS (ARM e Intel, dashboard inclusa) in `dist/release` con i checksum e stampa i due comandi per pubblicarli (`git tag` e `gh release create`), da lanciare quando vuoi. Prima di pubblicare: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` e `npm run check` in `web/`.
+**Release.** Un tag `vX.Y.Z` avvia `.github/workflows/release.yml`: compila i binari (macOS e Linux, Intel e ARM, dashboard inclusa) e li pubblica come release GitHub, da cui li scarica `install.sh`. Prima del tag, allinea la versione in `Cargo.toml` e in `.claude-plugin/plugin.json`.
 
 **Plugin Claude Code.** Il repository è anche un marketplace: `.claude-plugin/marketplace.json` elenca il plugin `fine` (la radice del repo), `.claude-plugin/plugin.json` registra il server MCP tramite `scripts/fine-mcp.sh`, che cerca l'eseguibile anche fuori dal PATH. Verifica con `claude plugin validate .`.
 
