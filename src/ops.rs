@@ -14,31 +14,52 @@ use crate::money::eur;
 pub struct AccountView {
     pub uid: String,
     pub label: String,
+    /// Name chosen by the user (None = automatic label).
+    pub custom_label: Option<String>,
+    pub bank: Option<String>,
+    pub country: Option<String>,
     pub iban: Option<String>,
+    pub currency: String,
     pub balance: Option<f64>,
+    pub balance_currency: Option<String>,
     pub balance_at: Option<String>,
     pub consent_valid_until: Option<String>,
     pub transactions: i64,
+    pub last_sync_at: Option<String>,
+    pub last_sync_ok: Option<bool>,
+    pub last_sync_error: Option<String>,
 }
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<AccountView>> {
     let sql = format!(
-        "SELECT a.uid, {}, a.iban, a.balance_cents, a.balance_at, a.valid_until,
-                (SELECT COUNT(*) FROM transactions t WHERE t.account_uid = a.uid)
-         FROM accounts a ORDER BY a.created_at, a.uid",
+        "SELECT a.uid, {}, a.label, a.aspsp, a.country, a.iban, a.currency, a.balance_cents,
+                COALESCE(a.balance_currency, a.currency), a.balance_at, a.valid_until,
+                (SELECT COUNT(*) FROM transactions t WHERE t.account_uid = a.uid),
+                l.at, l.ok, l.message
+         FROM accounts a
+         LEFT JOIN sync_log l ON l.id = (SELECT MAX(id) FROM sync_log WHERE account_uid = a.uid)
+         ORDER BY a.aspsp, a.created_at, a.uid",
         db::ACCOUNT_LABEL
     );
     let mut st = conn.prepare(&sql)?;
-
     let rows = st.query_map([], |r| {
+        let balance: Option<i64> = r.get(7)?;
         Ok(AccountView {
             uid: r.get(0)?,
             label: r.get(1)?,
-            iban: r.get(2)?,
-            balance: r.get::<_, Option<i64>>(3)?.map(eur),
-            balance_at: r.get(4)?,
-            consent_valid_until: r.get(5)?,
-            transactions: r.get(6)?,
+            custom_label: r.get(2)?,
+            bank: r.get(3)?,
+            country: r.get(4)?,
+            iban: r.get(5)?,
+            currency: r.get(6)?,
+            balance: balance.map(eur),
+            balance_currency: balance.and(r.get(8)?),
+            balance_at: r.get(9)?,
+            consent_valid_until: r.get(10)?,
+            transactions: r.get(11)?,
+            last_sync_at: r.get(12)?,
+            last_sync_ok: r.get::<_, Option<i64>>(13)?.map(|v| v == 1),
+            last_sync_error: r.get(14)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -54,6 +75,8 @@ pub struct SearchParams {
     pub text: Option<String>,
     /// Exact category name
     pub category: Option<String>,
+    /// Only transactions with this tag
+    pub tag: Option<String>,
     /// Only transactions without a category
     #[serde(default)]
     pub uncategorized_only: bool,
@@ -75,12 +98,15 @@ pub struct TxView {
     pub categorized_by: Option<String>,
     pub amortized_months: Option<i64>,
     pub account: String,
+    pub tags: Vec<String>,
 }
 
 pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
     let mut sql = String::from(
         "SELECT t.id, t.booking_date, t.amount_cents, t.merchant, t.counterparty, t.description, c.name,
-                t.categorized_by, a.months, COALESCE(ac.label, ac.name, ac.iban, ac.uid)
+                t.categorized_by, a.months, COALESCE(ac.label, ac.name, ac.iban, ac.uid),
+                (SELECT group_concat(g.name, ',') FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
+                 WHERE tt.transaction_id = t.id)
          FROM transactions t
          LEFT JOIN categories c ON c.id = t.category_id
          LEFT JOIN amortizations a ON a.transaction_id = t.id
@@ -109,6 +135,13 @@ pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
         sql.push_str(" AND c.name = ?");
         args.push(c.clone().into());
     }
+    if let Some(tag) = p.tag.as_deref().filter(|t| !t.trim().is_empty()) {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
+                          WHERE tt.transaction_id = t.id AND g.name = ?)",
+        );
+        args.push(crate::tags::normalize(tag)?.into());
+    }
     if p.uncategorized_only {
         sql.push_str(" AND t.category_id IS NULL");
     }
@@ -127,6 +160,10 @@ pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
             categorized_by: r.get(7)?,
             amortized_months: r.get(8)?,
             account: r.get(9)?,
+            tags: r
+                .get::<_, Option<String>>(10)?
+                .map(|s| s.split(',').map(String::from).collect())
+                .unwrap_or_default(),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

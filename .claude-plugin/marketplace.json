@@ -1,0 +1,14 @@
+{
+  "name": "fine",
+  "description": "fine: finanza personale locale con la tua AI (MCP)",
+  "owner": {
+    "name": "giovamuge"
+  },
+  "plugins": [
+    {
+      "name": "fine",
+      "source": "./",
+      "description": "Finanza personale sui tuoi conti con la tua AI: disponibile, budget, tag, saldo. Dati solo in locale."
+    }
+  ]
+}

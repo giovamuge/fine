@@ -35,6 +35,7 @@ pub struct AccountSync {
 pub struct SyncReport {
     pub accounts: Vec<AccountSync>,
     pub auto_categorized: usize,
+    pub auto_tagged: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -180,10 +181,15 @@ pub fn store_transactions(
     Ok(inserted)
 }
 
+/// Accesses that reached the bank in the last 24h. A failure that never got an answer from
+/// Enable Banking (no network, DNS down right after the Mac wakes up) did not use any of the
+/// PSD2 daily quota, so it must not block the next attempts. Bank answers are logged as
+/// "Enable Banking <status>: ..." (see `enablebanking::Client::send`).
 fn syncs_last_24h(conn: &Connection, uid: &str) -> Result<i64> {
     let since = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
     Ok(conn.query_row(
-        "SELECT COUNT(*) FROM sync_log WHERE account_uid = ?1 AND at >= ?2",
+        "SELECT COUNT(*) FROM sync_log WHERE account_uid = ?1 AND at >= ?2
+           AND (ok = 1 OR message LIKE 'Enable Banking %')",
         params![uid, since],
         |r| r.get(0),
     )?)
@@ -201,6 +207,7 @@ pub async fn sync_all(conn: &mut Connection, client: &Client) -> Result<SyncRepo
     let mut report = SyncReport {
         accounts: vec![],
         auto_categorized: 0,
+        auto_tagged: 0,
     };
     for (uid, label) in accounts {
         let used = syncs_last_24h(conn, &uid)?;
@@ -241,6 +248,7 @@ pub async fn sync_all(conn: &mut Connection, client: &Client) -> Result<SyncRepo
         });
     }
     report.auto_categorized = apply_rules(conn)?;
+    report.auto_tagged = crate::tags::apply_rules_to_new(conn)?;
     Ok(report)
 }
 

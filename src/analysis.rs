@@ -673,6 +673,138 @@ pub fn anomalies(conn: &Connection, today: NaiveDate) -> Result<Vec<Anomaly>> {
     Ok(out)
 }
 
+#[derive(Debug, Serialize)]
+pub struct AccountBalance {
+    pub account: String,
+    pub balance: f64,
+    pub currency: String,
+    /// When the bank reported this balance.
+    pub as_of: String,
+    /// Counted in `current` / `points` (only base-currency accounts are summed).
+    pub in_total: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BalancePoint {
+    pub date: String,
+    pub balance: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BalanceChange {
+    pub days: u64,
+    pub change: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BalanceHistory {
+    /// Sum of the latest balances of the base-currency accounts.
+    pub current: Option<f64>,
+    pub accounts: Vec<AccountBalance>,
+    /// End-of-day total balance, one point per day.
+    pub points: Vec<BalancePoint>,
+    /// Change over the last 7/30/90/365 days (only those covered by the history).
+    pub changes: Vec<BalanceChange>,
+}
+
+/// Total balance over the last `days` days. Banks only give today's balance, so the past is
+/// reconstructed from the stored transactions: balance(d) = balance(as_of) - movements in (d, as_of].
+/// The history starts at the oldest stored transaction (before that it would be a guess).
+pub fn balance_history(conn: &Connection, today: NaiveDate, days: u64) -> Result<BalanceHistory> {
+    let sql = format!(
+        "SELECT a.uid, {}, a.balance_cents, a.balance_at, COALESCE(a.balance_currency, a.currency)
+         FROM accounts a WHERE a.balance_cents IS NOT NULL ORDER BY a.created_at, a.uid",
+        crate::db::ACCOUNT_LABEL
+    );
+    let rows: Vec<(String, String, i64, String, String)> = conn
+        .prepare(&sql)?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<Result<_, _>>()?;
+
+    let mut accounts = vec![];
+    // (balance, as_of date, daily net movements)
+    let mut series: Vec<(i64, NaiveDate, BTreeMap<NaiveDate, i64>)> = vec![];
+    for (uid, label, cents, at, currency) in rows {
+        let in_total = currency == crate::db::BASE_CURRENCY;
+        if in_total {
+            let daily: BTreeMap<NaiveDate, i64> = conn
+                .prepare(
+                    "SELECT booking_date, SUM(amount_cents) FROM transactions
+                     WHERE account_uid = ?1 AND currency = ?2 GROUP BY booking_date",
+                )?
+                .query_map(params![uid, currency], |r| {
+                    Ok((parse_date(&r.get::<_, String>(0)?), r.get(1)?))
+                })?
+                .collect::<Result<_, _>>()?;
+            series.push((cents, parse_date(at.get(..10).unwrap_or("")), daily));
+        }
+        accounts.push(AccountBalance {
+            account: label,
+            balance: eur(cents),
+            currency,
+            as_of: at,
+            in_total,
+        });
+    }
+    if series.is_empty() {
+        return Ok(BalanceHistory {
+            current: None,
+            accounts,
+            points: vec![],
+            changes: vec![],
+        });
+    }
+
+    let oldest = series
+        .iter()
+        .filter_map(|(_, _, d)| d.keys().next().copied())
+        .min()
+        .unwrap_or(today);
+    let start = (today - Days::new(days)).max(oldest).min(today);
+    let mut totals: Vec<(NaiveDate, i64)> = vec![];
+    let mut day = start;
+    while day <= today {
+        totals.push((day, 0));
+        day = day + Days::new(1);
+    }
+    for (balance, as_of, daily) in &series {
+        let up_to_as_of: i64 = daily.range(..=*as_of).map(|(_, v)| v).sum();
+        let mut running: i64 = daily.range(..start).map(|(_, v)| v).sum();
+        for (d, total) in totals.iter_mut() {
+            running += daily.get(d).copied().unwrap_or(0);
+            *total += balance + running - up_to_as_of;
+        }
+    }
+    let last = totals.last().map(|(_, v)| *v).unwrap_or(0);
+    let changes = [7, 30, 90, 365]
+        .into_iter()
+        .filter_map(|k| {
+            let past = today - Days::new(k);
+            totals
+                .iter()
+                .find(|(d, _)| *d == past)
+                .map(|(_, v)| BalanceChange {
+                    days: k,
+                    change: eur(last - v),
+                })
+        })
+        .collect();
+    Ok(BalanceHistory {
+        current: Some(eur(series.iter().map(|(b, _, _)| b).sum())),
+        accounts,
+        points: totals
+            .into_iter()
+            .map(|(d, v)| BalancePoint {
+                date: d.to_string(),
+                balance: eur(v),
+            })
+            .collect(),
+        changes,
+    })
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -816,5 +948,46 @@ pub mod tests {
         // Mondays in Nov 2026: 2, 9, 16, 23, 30
         assert_eq!(p.expected_between(d("2026-11-01"), d("2026-11-30")), 5000);
         assert_eq!(p.next_due_from(d("2026-11-10")), d("2026-11-16"));
+    }
+
+    #[test]
+    fn balance_history_is_reconstructed_backwards() {
+        let conn = crate::db::open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO accounts (uid, currency, balance_cents, balance_at, balance_currency)
+             VALUES ('a', 'XXX', 100000, '2026-03-10T08:00:00+00:00', 'EUR'),
+                    ('b', 'USD', 5000, '2026-03-10T08:00:00+00:00', 'USD')",
+            [],
+        )
+        .unwrap();
+        for (i, (date, cents, cur)) in [
+            ("2026-03-01", 200000, "EUR"), // salary
+            ("2026-03-05", -50000, "EUR"),
+            ("2026-03-09", -10000, "EUR"),
+            ("2026-03-11", -2000, "EUR"), // booked after the balance was read
+            ("2026-03-06", -999, "USD"),  // other currency: ignored
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO transactions (account_uid, booking_date, amount_cents, currency, merchant, dedup_key)
+                 VALUES ('a', ?1, ?2, ?3, 'x', ?4)",
+                params![date, cents, cur, i as i64],
+            )
+            .unwrap();
+        }
+        let h = balance_history(&conn, d("2026-03-12"), 365).unwrap();
+        assert_eq!(h.current, Some(1000.0));
+        assert_eq!(h.accounts.len(), 2);
+        assert!(!h.accounts[1].in_total);
+        let at = |day: &str| h.points.iter().find(|p| p.date == day).unwrap().balance;
+        assert_eq!(h.points.first().unwrap().date, "2026-03-01"); // starts at the oldest movement
+        assert_eq!(at("2026-03-01"), 1600.0); // 1000 + 500 + 100 (movements until the balance date)
+        assert_eq!(at("2026-03-05"), 1100.0);
+        assert_eq!(at("2026-03-10"), 1000.0);
+        assert_eq!(at("2026-03-12"), 980.0);
+        let week = h.changes.iter().find(|c| c.days == 7).unwrap();
+        assert_eq!(week.change, 980.0 - 1100.0);
     }
 }

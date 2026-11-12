@@ -123,6 +123,39 @@ async fn respects_daily_sync_limit() {
 }
 
 #[tokio::test]
+async fn network_failures_do_not_use_the_daily_limit() {
+    let server = MockServer::start().await;
+    let mut conn = db::open_in_memory().unwrap();
+    conn.execute(
+        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+        [],
+    )
+    .unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    // Three answers from the bank (they count) and one DNS failure at wake-up (it does not).
+    for msg in [
+        "Enable Banking 429 Too Many Requests: {}",
+        "Enable Banking 422 Unprocessable Entity: {}",
+        "Enable Banking 429 Too Many Requests: {}",
+        "error sending request for url (...): dns error",
+    ] {
+        conn.execute(
+            "INSERT INTO sync_log (account_uid, at, ok, message) VALUES ('acc-1', ?1, 0, ?2)",
+            [&now, msg],
+        )
+        .unwrap();
+    }
+    let report = sync::sync_all(&mut conn, &client(&server.uri()))
+        .await
+        .unwrap();
+    assert!(
+        report.accounts[0].skipped.is_none(),
+        "one real attempt is still allowed"
+    );
+    assert!(!server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn reports_expired_consent_clearly() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
