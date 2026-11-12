@@ -7,9 +7,7 @@ dir=${FINE_INSTALL_DIR:-$HOME/.local/bin}
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) target=aarch64-apple-darwin ;;
   Darwin-x86_64) target=x86_64-apple-darwin ;;
-  Linux-x86_64) target=x86_64-unknown-linux-gnu ;;
-  Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-gnu ;;
-  *) echo "Sistema non supportato: $(uname -sm). Compila con: cargo install --git https://github.com/$repo" >&2; exit 1 ;;
+  *) echo "Nessun eseguibile pronto per $(uname -sm). Compila con: cargo install --git https://github.com/$repo" >&2; exit 1 ;;
 esac
 url=https://github.com/$repo/releases/latest/download/fine-$target.tar.gz
 tmp=$(mktemp -d)
