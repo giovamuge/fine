@@ -1,6 +1,6 @@
 [package]
 name = "fine"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Personal finance on your own bank data (Enable Banking), powered by your AI subscription via MCP"
 license = "MIT"

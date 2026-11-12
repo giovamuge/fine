@@ -180,10 +180,37 @@ export interface SinkingFund {
   should_have_saved: number;
 }
 
+export type CategoryKind = "expense" | "income" | "transfer" | "saving";
+
 export interface CategoryView {
   name: string;
-  kind: "expense" | "income" | "transfer" | "saving";
+  kind: CategoryKind;
+  icon: string | null;
+  color: string | null;
   transactions: number;
+  rules: number;
+}
+
+export interface CategoryPatch {
+  rename?: string;
+  kind?: CategoryKind;
+  /** "" clears it */
+  icon?: string;
+  /** "" clears it */
+  color?: string;
+}
+
+export interface DeleteCategoryOutcome {
+  transactions: number;
+  moved_to: string | null;
+}
+
+export interface Rule {
+  id: number;
+  pattern: string;
+  category: string;
+  source: string;
+  hits: number;
 }
 
 export interface TxView {

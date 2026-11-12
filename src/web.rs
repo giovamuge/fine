@@ -126,6 +126,34 @@ struct CategorizeBody {
 }
 
 #[derive(Deserialize)]
+struct IdBody {
+    id: i64,
+}
+
+#[derive(Deserialize)]
+struct NewCategoryBody {
+    name: String,
+    kind: String,
+    #[serde(default)]
+    icon: String,
+    #[serde(default)]
+    color: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateCategoryBody {
+    name: String,
+    #[serde(flatten)]
+    patch: ops::CategoryPatch,
+}
+
+#[derive(Deserialize)]
+struct DeleteCategoryBody {
+    name: String,
+    move_to: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct TagBody {
     transaction_ids: Vec<i64>,
     tags: Vec<String>,
@@ -177,7 +205,41 @@ pub fn router(paths: Paths, config: Config, password: Option<String>) -> Router 
             "/api/transactions",
             get(|State(s): State<Shared>, Query(q): Query<ops::SearchParams>| async move { with_db(&s, move |c| ops::search(c, &q)).await }),
         )
-        .route("/api/categories", get(|State(s): State<Shared>| async move { with_db(&s, |c| ops::list_categories(c)).await }))
+        .route(
+            "/api/categories",
+            get(|State(s): State<Shared>| async move { with_db(&s, |c| ops::list_categories(c)).await }).post(
+                |State(s): State<Shared>, Json(b): Json<NewCategoryBody>| async move {
+                    with_db(&s, move |c| {
+                        if ops::list_categories(c)?.iter().any(|x| x.name.eq_ignore_ascii_case(b.name.trim())) {
+                            anyhow::bail!("esiste già una categoria {:?}", b.name.trim());
+                        }
+                        ops::upsert_category(c, &b.name, &b.kind)?;
+                        let patch = ops::CategoryPatch { icon: Some(b.icon), color: Some(b.color), ..Default::default() };
+                        ops::update_category(c, &b.name, &patch)
+                    })
+                    .await
+                },
+            ),
+        )
+        .route("/api/rules", get(|State(s): State<Shared>| async move { with_db(&s, |c| categorize::list_rules(c)).await }))
+        .route(
+            "/api/rules/delete",
+            post(|State(s): State<Shared>, Json(b): Json<IdBody>| async move {
+                with_db(&s, move |c| categorize::delete_rule(c, b.id)).await
+            }),
+        )
+        .route(
+            "/api/categories/update",
+            post(|State(s): State<Shared>, Json(b): Json<UpdateCategoryBody>| async move {
+                with_db(&s, move |c| ops::update_category(c, &b.name, &b.patch)).await
+            }),
+        )
+        .route(
+            "/api/categories/delete",
+            post(|State(s): State<Shared>, Json(b): Json<DeleteCategoryBody>| async move {
+                with_db(&s, move |c| ops::delete_category(c, &b.name, b.move_to.as_deref())).await
+            }),
+        )
         .route("/api/recurring", get(|State(s): State<Shared>| async move { with_db(&s, |c| analysis::recurring(c, today())).await }))
         .route(
             "/api/sinking",

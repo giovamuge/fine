@@ -1,6 +1,6 @@
 // A tiny history-API router: four routes, query strings for filters. The Rust server
 // answers index.html for every non-/api path, so deep links work.
-import { createContext, useContext, useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
 export interface Route {
   path: string;
@@ -38,31 +38,14 @@ export function useRoute(): Route {
   return useContext(RouteCtx);
 }
 
-export function Link({
-  to,
-  children,
-  className,
-  "aria-current": ariaCurrent,
-  ...rest
-}: {
-  to: string;
-  children: ReactNode;
-  className?: string;
-  "aria-current"?: "page" | undefined;
-  title?: string;
-  "aria-label"?: string;
-  style?: CSSProperties;
-}) {
-  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+export function Link({ to, onClick, ...rest }: Omit<ComponentProps<"a">, "href"> & { to: string }) {
+  const handle = (e: MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(e);
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     navigate(to);
   };
-  return (
-    <a href={to} onClick={onClick} className={className} aria-current={ariaCurrent} {...rest}>
-      {children}
-    </a>
-  );
+  return <a href={to} onClick={handle} {...rest} />;
 }
 
 export function href(path: string, params: Record<string, string | undefined>): string {

@@ -1,12 +1,14 @@
 // Categorize or tag many transactions at once.
 import { useEffect, useState } from "react";
-import { api, errorMessage } from "../lib/api";
-import { useApp } from "../lib/app-state";
-import { useToast } from "../lib/toast";
-import { integer } from "../lib/format";
-import { Modal } from "./Modal";
-import { TagAdd, TagChips } from "./TagInput";
-import { Icon } from "./Icon";
+import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CategoryPicker } from "@/components/CategoryPicker";
+import { ResponsiveDialog } from "@/components/ResponsiveDialog";
+import { TagAdd, TagChips } from "@/components/TagInput";
+import { api, errorMessage } from "@/lib/api";
+import { useApp } from "@/lib/app-state";
+import { integer } from "@/lib/format";
+import { useToast } from "@/lib/toast";
 
 export function BulkDialog({
   mode,
@@ -21,7 +23,7 @@ export function BulkDialog({
   onDone: () => void;
   tagSuggestions: string[];
 }) {
-  const { categories, refresh } = useApp();
+  const { refresh } = useApp();
   const toast = useToast();
   const [cat, setCat] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -52,33 +54,31 @@ export function BulkDialog({
   };
 
   return (
-    <Modal open={mode !== null} onClose={onClose} title={mode === "tag" ? `Aggiungi tag a ${n} movimenti` : `Categoria per ${n} movimenti`}>
+    <ResponsiveDialog
+      open={mode !== null}
+      onClose={onClose}
+      title={mode === "tag" ? `Aggiungi tag a ${n} movimenti` : `Categoria per ${n} movimenti`}
+      description={mode === "categorize" ? "Non crea regole: per quelle apri il singolo movimento." : "I tag si aggiungono a quelli già presenti."}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Annulla
+          </Button>
+          <Button onClick={apply} disabled={busy || (mode === "categorize" ? !cat : tags.length === 0)}>
+            {busy && <Loader2 className="animate-spin" />}
+            Applica a {n}
+          </Button>
+        </>
+      }
+    >
       {mode === "categorize" ? (
-        <div className="field">
-          <label htmlFor="bulk-cat">Categoria</label>
-          <select id="bulk-cat" className="select" value={cat} onChange={(e) => setCat(e.target.value)}>
-            <option value="">Scegli…</option>
-            {categories.map((c) => (
-              <option key={c.name} value={c.name}>{c.name}</option>
-            ))}
-          </select>
-          <span className="hint">Non crea regole: per quelle apri il singolo movimento.</span>
-        </div>
+        <CategoryPicker value={cat} onChange={setCat} ariaLabel="Categoria" />
       ) : (
-        <div className="stack">
+        <div className="flex flex-col gap-3">
           <TagChips tags={tags} onRemove={(t) => setTags((x) => x.filter((y) => y !== t))} />
           <TagAdd suggestions={tagSuggestions.filter((s) => !tags.includes(s))} onAdd={(t) => setTags((x) => (x.includes(t) ? x : [...x, t]))} autoFocus />
         </div>
       )}
-      <div className="actions">
-        <button type="button" className="btn" onClick={onClose} disabled={busy}>
-          Annulla
-        </button>
-        <button type="button" className="btn primary" onClick={apply} disabled={busy || (mode === "categorize" ? !cat : tags.length === 0)}>
-          {busy && <Icon name="sync" size={16} className="spin" />}
-          Applica a {n}
-        </button>
-      </div>
-    </Modal>
+    </ResponsiveDialog>
   );
 }

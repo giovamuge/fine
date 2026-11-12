@@ -1,20 +1,24 @@
 // Tag chips with an add field (native datalist autocomplete: keyboard-accessible for free).
 import { useId, useState, type KeyboardEvent } from "react";
-import { Icon } from "./Icon";
+import { Hash, Plus, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-export function TagChips({ tags, onRemove, small }: { tags: string[]; onRemove?: (tag: string) => void; small?: boolean }) {
+export function TagChips({ tags, onRemove }: { tags: string[]; onRemove?: (tag: string) => void }) {
   if (!tags.length) return null;
   return (
-    <span className="tags" style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+    <span className="inline-flex flex-wrap gap-1">
       {tags.map((t) => (
-        <span key={t} className="chip tag" style={small ? { padding: "3px 7px", fontSize: 11 } : undefined}>
+        <Badge key={t} variant="secondary" className="gap-0.5 font-normal">
+          <Hash className="opacity-60" />
           {t}
           {onRemove && (
-            <button type="button" onClick={() => onRemove(t)} aria-label={`Rimuovi tag ${t}`} title="Rimuovi">
-              <Icon name="x" size={12} />
+            <button type="button" className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-foreground/10" onClick={() => onRemove(t)} aria-label={`Rimuovi tag ${t}`}>
+              <X />
             </button>
           )}
-        </span>
+        </Badge>
       ))}
     </span>
   );
@@ -24,13 +28,11 @@ export function TagAdd({
   suggestions,
   onAdd,
   disabled,
-  placeholder = "Aggiungi tag…",
   autoFocus,
 }: {
   suggestions: string[];
   onAdd: (tag: string) => void;
   disabled?: boolean;
-  placeholder?: string;
   autoFocus?: boolean;
 }) {
   const [value, setValue] = useState("");
@@ -48,14 +50,13 @@ export function TagAdd({
     }
   };
   return (
-    <div className="inline">
-      <input
-        className="input"
+    <div className="flex gap-2">
+      <Input
         list={listId}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKey}
-        placeholder={placeholder}
+        placeholder="Aggiungi tag… (es. vacanza-londra)"
         aria-label="Nuovo tag"
         disabled={disabled}
         autoCapitalize="none"
@@ -67,9 +68,9 @@ export function TagAdd({
           <option key={s} value={s} />
         ))}
       </datalist>
-      <button type="button" className="btn" onClick={submit} disabled={disabled || !value.trim()}>
-        <Icon name="plus" size={16} /> Aggiungi
-      </button>
+      <Button type="button" variant="outline" onClick={submit} disabled={disabled || !value.trim()}>
+        <Plus /> Aggiungi
+      </Button>
     </div>
   );
 }

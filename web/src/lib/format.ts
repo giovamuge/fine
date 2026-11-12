@@ -1,9 +1,12 @@
 // Italian formatting helpers (Intl it-IT, EUR by default).
 
-const eur = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
-const eur0 = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+// useGrouping "always": it-IT would otherwise write 2560,00 € but 15.391,44 €
+// (supported by every current browser; the TS lib types still say boolean).
+const ALWAYS = "always" as unknown as boolean;
+const eur = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", useGrouping: ALWAYS });
+const eur0 = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR", maximumFractionDigits: 0, useGrouping: ALWAYS });
 const currencyCache = new Map<string, Intl.NumberFormat>();
-const int = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0 });
+const int = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGrouping: ALWAYS });
 const pct = new Intl.NumberFormat("it-IT", { style: "percent", maximumFractionDigits: 0 });
 
 export function euro(n: number): string {
@@ -20,9 +23,9 @@ export function money(n: number, currency: string | null | undefined): string {
   let f = currencyCache.get(c);
   if (!f) {
     try {
-      f = new Intl.NumberFormat("it-IT", { style: "currency", currency: c });
+      f = new Intl.NumberFormat("it-IT", { style: "currency", currency: c, useGrouping: ALWAYS });
     } catch {
-      f = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      f = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: ALWAYS });
     }
     currencyCache.set(c, f);
   }

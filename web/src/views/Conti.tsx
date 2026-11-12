@@ -1,15 +1,24 @@
 import { useState } from "react";
-import { api, errorMessage } from "../lib/api";
-import { useApp } from "../lib/app-state";
-import { useAsync } from "../lib/useAsync";
-import { useToast } from "../lib/toast";
-import { daysUntil, fmtDate, fmtDateTime, integer, money, plural, relativeTime } from "../lib/format";
-import { Empty, Loaded } from "../components/States";
-import { Icon } from "../components/Icon";
-import { ConfirmDialog, Modal } from "../components/Modal";
-import { ConnectDialog, type ConnectPreset } from "../components/ConnectDialog";
-import { SyncResultDialog } from "../components/SyncResultDialog";
-import type { AccountView } from "../lib/types";
+import { AlertTriangle, CheckCircle2, Clock, Landmark, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ConnectDialog, type ConnectPreset } from "@/components/ConnectDialog";
+import { PageHeader } from "@/components/PageHeader";
+import { ResponsiveDialog } from "@/components/ResponsiveDialog";
+import { Empty, Loaded } from "@/components/States";
+import { SyncResultDialog } from "@/components/SyncResultDialog";
+import { api, errorMessage } from "@/lib/api";
+import { useApp } from "@/lib/app-state";
+import { daysUntil, fmtDate, fmtDateTime, integer, money, plural, relativeTime } from "@/lib/format";
+import { useToast } from "@/lib/toast";
+import type { AccountView } from "@/lib/types";
+import { useAsync } from "@/lib/useAsync";
+import { cn } from "@/lib/utils";
 
 export function Conti() {
   const { version, refresh, sync, runSync, clearSyncResult } = useApp();
@@ -53,26 +62,26 @@ export function Conti() {
 
   return (
     <>
-      <header className="page-head">
-        <div>
-          <h1>Conti</h1>
-          <p className="sub">Banche collegate tramite Enable Banking (PSD2, sola lettura)</p>
-        </div>
-        <div className="inline">
-          <button type="button" className="btn" onClick={runSync} disabled={sync.running || !accounts.data?.length} title="Scarica i nuovi movimenti (max 4 volte al giorno per conto)">
-            <Icon name="sync" size={16} className={sync.running ? "spin" : undefined} />
-            {sync.running ? "Sincronizzo…" : "Sincronizza ora"}
-          </button>
-          <button type="button" className="btn primary" onClick={() => setConnect({})}>
-            <Icon name="plus" size={16} /> Collega una banca
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Conti"
+        description="Banche collegate tramite Enable Banking (PSD2, sola lettura)"
+        actions={
+          <>
+            <Button variant="outline" onClick={runSync} disabled={sync.running || !accounts.data?.length}>
+              <RefreshCw className={cn(sync.running && "animate-spin")} />
+              {sync.running ? "Sincronizzo…" : "Sincronizza ora"}
+            </Button>
+            <Button onClick={() => setConnect({})}>
+              <Plus /> Collega una banca
+            </Button>
+          </>
+        }
+      />
 
       <Loaded {...accounts} rows={6}>
         {(list) =>
           list.length ? (
-            <div className="acct-grid">
+            <div className="grid gap-4 lg:grid-cols-2">
               {list.map((a) => (
                 <AccountCard
                   key={a.uid}
@@ -87,53 +96,50 @@ export function Conti() {
               ))}
             </div>
           ) : (
-            <section className="card">
-              <Empty title="Nessun conto collegato.">
-                Collega la tua banca: scegli dall'elenco, autorizzi sulla pagina della banca e incolli l'indirizzo finale. Serve un'applicazione Enable Banking configurata (vedi README).
-              </Empty>
-              <div style={{ marginTop: 12 }}>
-                <button type="button" className="btn primary" onClick={() => setConnect({})}>
-                  <Icon name="plus" size={16} /> Collega una banca
-                </button>
-              </div>
-            </section>
+            <Empty
+              icon={<Landmark />}
+              title="Nessun conto collegato."
+              action={
+                <Button onClick={() => setConnect({})}>
+                  <Plus /> Collega una banca
+                </Button>
+              }
+            >
+              Scegli la banca, autorizzi sulla sua pagina e incolli l'indirizzo finale. Serve un'applicazione Enable Banking configurata (vedi README).
+            </Empty>
           )
         }
       </Loaded>
 
       <ConnectDialog preset={connect} onClose={() => setConnect(null)} />
 
-      <Modal open={rename !== null} onClose={() => setRename(null)} title="Rinomina conto">
-        <div className="field">
-          <label htmlFor="rename-label">Nome</label>
-          <input id="rename-label" className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={rename?.label ?? ""} maxLength={60} onKeyDown={(e) => e.key === "Enter" && doRename()} />
-          <span className="hint">Lascia vuoto per tornare al nome automatico ({rename?.label}).</span>
-        </div>
-        <div className="actions">
-          <button type="button" className="btn" onClick={() => setRename(null)} disabled={busy}>
-            Annulla
-          </button>
-          <button type="button" className="btn primary" onClick={doRename} disabled={busy}>
-            Salva
-          </button>
-        </div>
-      </Modal>
-
-      <ConfirmDialog
-        open={remove !== null}
-        onClose={() => setRemove(null)}
-        onConfirm={doRemove}
-        title={`Rimuovere «${remove?.label ?? ""}»?`}
-        confirmLabel="Rimuovi definitivamente"
-        danger
-        busy={busy}
+      <ResponsiveDialog
+        open={rename !== null}
+        onClose={() => setRename(null)}
+        title="Rinomina conto"
+        description={`Lascia vuoto per tornare al nome automatico (${rename?.label ?? ""}).`}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRename(null)} disabled={busy}>
+              Annulla
+            </Button>
+            <Button onClick={doRename} disabled={busy}>
+              Salva
+            </Button>
+          </>
+        }
       >
+        <div className="flex flex-col gap-1.5 pb-2">
+          <Label htmlFor="rename-label">Nome</Label>
+          <Input id="rename-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={rename?.label ?? ""} maxLength={60} onKeyDown={(e) => e.key === "Enter" && doRename()} />
+        </div>
+      </ResponsiveDialog>
+
+      <ConfirmDialog open={remove !== null} onClose={() => setRemove(null)} onConfirm={doRemove} title={`Rimuovere «${remove?.label ?? ""}»?`} confirmLabel="Rimuovi definitivamente" danger busy={busy}>
         <p>
           Verranno cancellati da questo computer il conto e i suoi <strong>{plural(remove?.transactions ?? 0, "movimento", "movimenti")}</strong>, con tag e ammortamenti. Il consenso viene revocato presso la banca se non serve ad altri conti.
         </p>
-        <p className="neg-text">
-          <strong>Non si può annullare.</strong> Lo storico si recupera solo per quanto la banca concede ricollegando il conto.
-        </p>
+        <p className="font-medium text-destructive">Non si può annullare. Lo storico si recupera solo per quanto la banca concede ricollegando il conto.</p>
       </ConfirmDialog>
 
       <SyncResultDialog state={sync} onClose={clearSyncResult} />
@@ -146,60 +152,86 @@ function AccountCard({ a, onRenew, onRename, onRemove }: { a: AccountView; onRen
   const consentBad = days !== null && days < 0;
   const consentWarn = days !== null && days >= 0 && days <= 14;
   const failed = a.last_sync_ok === false;
+  const urgent = failed || consentBad || consentWarn;
   return (
-    <section className={`card acct${failed || consentBad ? "" : ""}`} aria-label={a.label}>
-      <div className="top">
-        <div style={{ minWidth: 0 }}>
-          <div className="name">{a.custom_label ?? a.label}</div>
-          <div className="bank">
-            {[a.bank, a.country].filter(Boolean).join(" · ") || "Banca"}
-            {a.custom_label && a.custom_label !== a.label ? ` · ${a.label}` : ""}
-          </div>
+    <Card className={cn(failed && "border-destructive/40")}>
+      <CardHeader>
+        <CardTitle className="truncate">{a.custom_label ?? a.label}</CardTitle>
+        <CardDescription className="truncate">
+          {[a.bank, a.country].filter(Boolean).join(" · ") || "Banca"}
+          {a.custom_label && a.custom_label !== a.label ? ` · ${a.label}` : ""}
+        </CardDescription>
+        <CardAction>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={`Azioni per ${a.label}`}>
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onRenew}>
+                <RefreshCw /> Rinnova consenso
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onRename}>
+                <Pencil /> Rinomina
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={onRemove}>
+                <Trash2 /> Rimuovi
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div>
+          <div className="tabular text-3xl font-semibold tracking-tight">{a.balance === null ? "—" : money(a.balance, a.balance_currency ?? a.currency)}</div>
+          {a.balance_at && <div className="text-xs text-muted-foreground">al {fmtDateTime(a.balance_at)}</div>}
+          {a.iban && <div className="mt-1 font-mono text-xs tracking-wide text-muted-foreground">{a.iban}</div>}
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div className="balance">{a.balance === null ? "—" : money(a.balance, a.balance_currency ?? a.currency)}</div>
-          {a.balance_at && <div className="small muted">al {fmtDateTime(a.balance_at)}</div>}
+        <div className="flex flex-wrap gap-1.5">
+          {a.last_sync_at === null ? (
+            <Badge variant="outline" className="border-warning/40 text-warning">
+              <Clock /> Mai sincronizzato
+            </Badge>
+          ) : failed ? (
+            <Badge variant="destructive">
+              <AlertTriangle /> Sincronizzazione fallita {relativeTime(a.last_sync_at)}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="border-positive/30 text-positive">
+              <CheckCircle2 /> Sincronizzato {relativeTime(a.last_sync_at)}
+            </Badge>
+          )}
+          {days === null ? (
+            <Badge variant="outline">Consenso: —</Badge>
+          ) : consentBad ? (
+            <Badge variant="destructive">
+              <AlertTriangle /> Consenso scaduto il {fmtDate(a.consent_valid_until ?? "")}
+            </Badge>
+          ) : consentWarn ? (
+            <Badge variant="outline" className="border-warning/40 text-warning">
+              <AlertTriangle /> Consenso scade {days === 0 ? "oggi" : `tra ${integer(days)} ${days === 1 ? "giorno" : "giorni"}`}
+            </Badge>
+          ) : (
+            <Badge variant="outline">Consenso fino al {fmtDate(a.consent_valid_until ?? "")}</Badge>
+          )}
+          <Badge variant="secondary">{plural(a.transactions, "movimento", "movimenti")}</Badge>
         </div>
-      </div>
-      {a.iban && <div className="iban">{a.iban}</div>}
-      <div className="status">
-        {a.last_sync_at === null ? (
-          <span className="badge warn"><Icon name="clock" size={13} /> Mai sincronizzato</span>
-        ) : failed ? (
-          <span className="badge bad"><Icon name="alert" size={13} /> Sincronizzazione fallita {relativeTime(a.last_sync_at)}</span>
-        ) : (
-          <span className="badge ok"><Icon name="check" size={13} /> Sincronizzato {relativeTime(a.last_sync_at)}</span>
+        {failed && a.last_sync_error && (
+          <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+            <strong>Errore:</strong> {a.last_sync_error}
+          </p>
         )}
-        {days === null ? (
-          <span className="badge neutral">Consenso: —</span>
-        ) : consentBad ? (
-          <span className="badge bad"><Icon name="alert" size={13} /> Consenso scaduto il {fmtDate(a.consent_valid_until ?? "")}</span>
-        ) : consentWarn ? (
-          <span className="badge warn"><Icon name="alert" size={13} /> Consenso scade tra {days === 0 ? "oggi" : `${integer(days)} ${days === 1 ? "giorno" : "giorni"}`}</span>
-        ) : (
-          <span className="badge neutral">Consenso fino al {fmtDate(a.consent_valid_until ?? "")}</span>
-        )}
-        <span className="badge neutral">{plural(a.transactions, "movimento", "movimenti")}</span>
-      </div>
-      {failed && a.last_sync_error && (
-        <div className="err" role="alert">
-          <strong>Errore:</strong> {a.last_sync_error}
-        </div>
+        {(consentBad || consentWarn) && !failed && <p className="text-sm text-warning">Rinnova il consenso per continuare a ricevere i movimenti: lo storico resta, senza duplicati.</p>}
+      </CardContent>
+      {urgent && (
+        <CardFooter>
+          <Button onClick={onRenew}>
+            <RefreshCw /> Rinnova consenso
+          </Button>
+        </CardFooter>
       )}
-      {(consentBad || consentWarn) && !failed && (
-        <p className="small" style={{ color: "var(--warn-text)" }}>Rinnova il consenso per continuare a ricevere i movimenti: lo storico resta, senza duplicati.</p>
-      )}
-      <div className="actions">
-        <button type="button" className={`btn sm${failed || consentBad || consentWarn ? " primary" : ""}`} onClick={onRenew} title="Rinnova o ripristina l'autorizzazione della banca: lo storico resta">
-          <Icon name="sync" size={14} /> Rinnova consenso
-        </button>
-        <button type="button" className="btn sm" onClick={onRename}>
-          <Icon name="edit" size={14} /> Rinomina
-        </button>
-        <button type="button" className="btn sm danger" onClick={onRemove}>
-          <Icon name="trash" size={14} /> Rimuovi
-        </button>
-      </div>
-    </section>
+    </Card>
   );
 }

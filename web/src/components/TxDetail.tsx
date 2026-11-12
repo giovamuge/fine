@@ -1,26 +1,60 @@
 // Transaction detail: category (with the explicit "also for future movements of this
 // merchant" choice), tags with autocomplete and optional rule, amortization.
-import { useEffect, useState } from "react";
-import type { TxView } from "../lib/types";
-import { api, errorMessage } from "../lib/api";
-import { useApp } from "../lib/app-state";
-import { useToast } from "../lib/toast";
-import { euro, fmtDate, integer } from "../lib/format";
-import { Modal } from "./Modal";
-import { TagAdd, TagChips } from "./TagInput";
-import { Icon } from "./Icon";
+import { useEffect, useState, type ReactNode } from "react";
+import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { CategoryPicker } from "@/components/CategoryPicker";
+import { ResponsiveDialog } from "@/components/ResponsiveDialog";
+import { TagAdd, TagChips } from "@/components/TagInput";
+import { api, errorMessage } from "@/lib/api";
+import { useApp } from "@/lib/app-state";
+import { CategoryIcon } from "@/lib/categories";
+import { euro, fmtDate, integer } from "@/lib/format";
+import { useToast } from "@/lib/toast";
+import type { TxView } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const BY: Record<string, string> = { manual: "a mano", rule: "da una regola", ai: "dall'AI", learned: "da una regola" };
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function CheckRow({ id, checked, onChange, title, hint }: { id: string; checked: boolean; onChange: (v: boolean) => void; title: string; hint: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border p-3">
+      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" />
+      <Label htmlFor={id} className="flex flex-col items-start gap-1 font-normal">
+        <span className="font-medium">{title}</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </Label>
+    </div>
+  );
+}
+
 export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; onClose: () => void; tagSuggestions: string[] }) {
-  const { categories, refresh } = useApp();
+  const { refresh, categoryByName } = useApp();
   const toast = useToast();
   const [cat, setCat] = useState("");
   const [learn, setLearn] = useState(false);
   const [tagRule, setTagRule] = useState(false);
   const [months, setMonths] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  // Keep the last transaction while the dialog animates closed.
+  const [shown, setShown] = useState<TxView | null>(tx);
 
+  useEffect(() => {
+    if (tx) setShown(tx);
+  }, [tx]);
   useEffect(() => {
     if (!tx) return;
     setCat(tx.category ?? "");
@@ -30,8 +64,8 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx?.id]);
 
-  if (!tx) return <Modal open={false} onClose={onClose} title="">{null}</Modal>;
-  const t = tx;
+  const t = tx ?? shown;
+  if (!t) return null;
   const title = t.merchant || t.counterparty || "Movimento";
   const canRule = (t.merchant || "").replace(/[^\p{L}\p{N}]/gu, "").length >= 3;
   const catChanged = cat !== (t.category ?? "");
@@ -52,9 +86,7 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
   const applyCategory = () =>
     run("cat", async () => {
       const r = await api.categorize([t.id], cat, learn && canRule);
-      if (r.rule_pattern) {
-        return `«${cat}» assegnata. Regola «${r.rule_pattern}» creata${r.auto_categorized ? `: ${integer(r.auto_categorized)} altri movimenti sistemati` : ""}.`;
-      }
+      if (r.rule_pattern) return `«${cat}» assegnata. Regola «${r.rule_pattern}» creata${r.auto_categorized ? `: ${integer(r.auto_categorized)} altri movimenti sistemati` : ""}.`;
       return `«${cat}» assegnata.`;
     });
 
@@ -76,97 +108,92 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
       return months > 1 ? `Spesa spalmata su ${months} mesi.` : "Ammortamento rimosso.";
     });
 
+  const category = t.category ? categoryByName.get(t.category.toLowerCase()) : undefined;
+  const facts: [string, ReactNode][] = [
+    ["Data", fmtDate(t.date)],
+    ...(t.counterparty && t.counterparty !== t.merchant ? ([["Controparte", t.counterparty]] as [string, ReactNode][]) : []),
+    ...(t.description ? ([["Descrizione", t.description]] as [string, ReactNode][]) : []),
+    ["Conto", t.account],
+    ...(t.category && t.categorized_by ? ([["Categoria", `assegnata ${BY[t.categorized_by] ?? t.categorized_by}`]] as [string, ReactNode][]) : []),
+  ];
+
   return (
-    <Modal open={!!tx} onClose={onClose} title={title} initialFocus=".close">
-      <div className={`detail-amount${t.amount > 0 ? " pos" : ""}`}>{t.amount > 0 ? `+${euro(t.amount)}` : euro(t.amount)}</div>
-      <dl className="detail-grid">
-        <dt>Data</dt>
-        <dd>{fmtDate(t.date)}</dd>
-        {t.counterparty && t.counterparty !== t.merchant && (
-          <>
-            <dt>Controparte</dt>
-            <dd>{t.counterparty}</dd>
-          </>
-        )}
-        {t.description && (
-          <>
-            <dt>Descrizione</dt>
-            <dd>{t.description}</dd>
-          </>
-        )}
-        <dt>Conto</dt>
-        <dd>{t.account}</dd>
-        {t.category && (
-          <>
-            <dt>Categoria</dt>
-            <dd>
-              {t.category}
-              {t.categorized_by && <span className="muted"> · assegnata {BY[t.categorized_by] ?? t.categorized_by}</span>}
-            </dd>
-          </>
-        )}
-      </dl>
-
-      <div className="section">
-        <h3>Categoria</h3>
-        <select className="select" value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Categoria">
-          <option value="">Da categorizzare</option>
-          {categories.map((c) => (
-            <option key={c.name} value={c.name}>{c.name}</option>
+    <ResponsiveDialog open={!!tx} onClose={onClose} title={title} description={fmtDate(t.date)}>
+      <div className="flex flex-col gap-5 pb-2">
+        <div className="flex items-center gap-3">
+          <CategoryIcon category={category} className="size-11 rounded-xl text-xl" />
+          <div className={cn("tabular text-3xl font-semibold tracking-tight", t.amount > 0 && "text-positive")}>{t.amount > 0 ? `+${euro(t.amount)}` : euro(t.amount)}</div>
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+          {facts.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted-foreground">{k}</dt>
+              <dd className="break-words">{v}</dd>
+            </div>
           ))}
-        </select>
-        {canRule && (
-          <label className="check">
-            <input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} />
-            <span>
-              <span className="t">Usa questa categoria anche per i prossimi movimenti di «{t.merchant}»</span>
-              <br />
-              <span className="d">Crea una regola: vale per i movimenti futuri e per quelli passati ancora da categorizzare.</span>
-            </span>
-          </label>
-        )}
-        <div className="actions" style={{ justifyContent: "flex-start" }}>
-          <button type="button" className="btn primary" disabled={!cat || (!catChanged && !learn) || busy !== null} onClick={applyCategory}>
-            {busy === "cat" && <Icon name="sync" size={16} className="spin" />}
-            {learn ? "Applica e crea regola" : "Applica"}
-          </button>
-        </div>
-      </div>
+        </dl>
 
-      <div className="section">
-        <h3>Tag</h3>
-        {t.tags.length ? <TagChips tags={t.tags} onRemove={removeTag} /> : <p className="small muted">Nessun tag. I tag sono liberi (#vacanza-londra, #lavoro, #rimborsabile…) e indipendenti dalla categoria.</p>}
-        <TagAdd suggestions={tagSuggestions.filter((s) => !t.tags.includes(s))} onAdd={addTag} disabled={busy !== null} />
-        {canRule && (
-          <label className="check">
-            <input type="checkbox" checked={tagRule} onChange={(e) => setTagRule(e.target.checked)} />
-            <span>
-              <span className="t">Tagga automaticamente anche i prossimi movimenti di «{t.merchant}»</span>
-              <br />
-              <span className="d">Vale per i tag che aggiungi da ora.</span>
-            </span>
-          </label>
-        )}
-      </div>
-
-      {t.amount < 0 && (
-        <div className="section">
-          <h3>Ammortamento</h3>
-          <p className="small muted">Una spesa grande può pesare 1/N al mese sul budget invece che tutta nel mese in cui l'hai fatta.</p>
-          <div className="inline">
-            <select className="select" value={months} onChange={(e) => setMonths(Number(e.target.value))} aria-label="Mesi di ammortamento">
-              <option value={0}>Nessuno</option>
-              {[3, 6, 12, 24, 36].map((m) => (
-                <option key={m} value={m}>{m} mesi ({euro(-t.amount / m)} al mese)</option>
-              ))}
-            </select>
-            <button type="button" className="btn" disabled={months === (t.amortized_months ?? 0) || busy !== null} onClick={applyAmortize}>
-              {busy === "amort" && <Icon name="sync" size={16} className="spin" />}
-              Applica
-            </button>
+        <Separator />
+        <Section title="Categoria">
+          <CategoryPicker value={cat} onChange={setCat} allowNone ariaLabel="Categoria" />
+          {canRule && (
+            <CheckRow
+              id="learn"
+              checked={learn}
+              onChange={setLearn}
+              title={`Usa questa categoria anche per i prossimi movimenti di «${t.merchant}»`}
+              hint="Crea una regola: vale per i movimenti futuri e per quelli passati ancora da categorizzare."
+            />
+          )}
+          <div>
+            <Button disabled={!cat || (!catChanged && !learn) || busy !== null} onClick={applyCategory}>
+              {busy === "cat" && <Loader2 className="animate-spin" />}
+              {learn ? "Applica e crea regola" : "Applica"}
+            </Button>
           </div>
-        </div>
-      )}
-    </Modal>
+        </Section>
+
+        <Separator />
+        <Section title="Tag">
+          {t.tags.length ? (
+            <TagChips tags={t.tags} onRemove={removeTag} />
+          ) : (
+            <p className="text-sm text-muted-foreground">Nessun tag. I tag sono liberi (#vacanza-londra, #lavoro, #rimborsabile…) e indipendenti dalla categoria.</p>
+          )}
+          <TagAdd suggestions={tagSuggestions.filter((s) => !t.tags.includes(s))} onAdd={addTag} disabled={busy !== null} />
+          {canRule && (
+            <CheckRow id="tagrule" checked={tagRule} onChange={setTagRule} title={`Tagga automaticamente anche i prossimi movimenti di «${t.merchant}»`} hint="Vale per i tag che aggiungi da ora." />
+          )}
+        </Section>
+
+        {t.amount < 0 && (
+          <>
+            <Separator />
+            <Section title="Ammortamento">
+              <p className="text-sm text-muted-foreground">Una spesa grande può pesare 1/N al mese sul budget invece che tutta nel mese in cui l'hai fatta.</p>
+              <div className="flex gap-2">
+                <Select value={String(months)} onValueChange={(v) => setMonths(Number(v))}>
+                  <SelectTrigger className="flex-1" aria-label="Mesi di ammortamento">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Nessuno</SelectItem>
+                    {[3, 6, 12, 24, 36].map((m) => (
+                      <SelectItem key={m} value={String(m)}>
+                        {m} mesi ({euro(-t.amount / m)} al mese)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" disabled={months === (t.amortized_months ?? 0) || busy !== null} onClick={applyAmortize}>
+                  {busy === "amort" && <Loader2 className="animate-spin" />}
+                  Applica
+                </Button>
+              </div>
+            </Section>
+          </>
+        )}
+      </div>
+    </ResponsiveDialog>
   );
 }
