@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use fine::config::{Config, DashboardConfig, EnableBankingConfig, NtfyConfig, Paths};
-use fine::{assistant, db, enablebanking, mcp, notify, ops, setup, sync, web};
+use fine::{ai, assistant, db, enablebanking, mcp, notify, ops, setup, sync, web};
 
 #[derive(Parser)]
 #[command(
@@ -66,8 +66,18 @@ enum Command {
     },
     /// Conti collegati
     Accounts,
-    /// Scarica le nuove transazioni (max 4 volte al giorno per conto)
-    Sync,
+    /// Scarica le nuove transazioni (max 4 volte al giorno per conto) e le categorizza
+    Sync {
+        /// Non usare l'AI (Claude Code / Codex) per i movimenti che le regole non riconoscono
+        #[arg(long)]
+        no_ai: bool,
+    },
+    /// Categorizza con l'AI (il tuo abbonamento Claude Code o Codex) i movimenti senza categoria
+    Categorize {
+        /// Ripropone anche i movimenti che l'AI aveva già lasciato senza categoria
+        #[arg(long)]
+        retry: bool,
+    },
     /// Quanto puoi spendere e avvisi (sincronizza prima se i dati hanno più di 6 ore)
     Status {
         #[arg(long)]
@@ -78,13 +88,16 @@ enum Command {
         #[arg(long, default_value = "fine - situazione")]
         title: String,
     },
-    /// Installa (o rimuove) la sincronizzazione automatica ogni 6 ore e la notifica giornaliera
+    /// Installa (o rimuove) sync ogni 6 ore, notifica giornaliera e dashboard sempre attiva
     Schedule {
         #[arg(long)]
         remove: bool,
         /// Non installare la notifica giornaliera
         #[arg(long)]
         no_notify: bool,
+        /// Non tenere la dashboard sempre attiva in background
+        #[arg(long)]
+        no_dashboard: bool,
     },
     /// Avvia il server MCP (stdio) per Claude, ChatGPT e altri client
     Mcp,
@@ -182,12 +195,12 @@ async fn main() -> Result<()> {
             days,
         } => {
             let eb = config.enable_banking()?;
-            let conn = db::open(&paths.db)?;
+            let mut conn = db::open(&paths.db)?;
             match bank {
                 Some(b) => {
-                    setup::connect_bank(&conn, eb, &b, &country.to_uppercase(), days).await?
+                    setup::connect_bank(&mut conn, eb, &b, &country.to_uppercase(), days).await?
                 }
-                None => setup::choose_and_connect(&conn, eb).await?,
+                None => setup::choose_and_connect(&mut conn, eb).await?,
             }
             println!("\nFatto. Esegui `fine sync` per scaricare le transazioni.");
         }
@@ -209,7 +222,7 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Command::Sync => {
+        Command::Sync { no_ai } => {
             let client = enablebanking::Client::new(config.enable_banking()?)?;
             let mut conn = db::open(&paths.db)?;
             let report = sync::sync_all(&mut conn, &client).await?;
@@ -226,7 +239,16 @@ async fn main() -> Result<()> {
                 }
             }
             println!("Categorizzate automaticamente: {}", report.auto_categorized);
+            if !no_ai && !run_ai(&mut conn, false).await {
+                failed = true;
+            }
             if failed {
+                std::process::exit(2);
+            }
+        }
+        Command::Categorize { retry } => {
+            let mut conn = db::open(&paths.db)?;
+            if !run_ai(&mut conn, retry).await {
                 std::process::exit(2);
             }
         }
@@ -257,7 +279,11 @@ async fn main() -> Result<()> {
             notify::send(ntfy, &title, &assistant::render(&st), &st).await?;
             println!("Notifica inviata.");
         }
-        Command::Schedule { remove, no_notify } => {
+        Command::Schedule {
+            remove,
+            no_notify,
+            no_dashboard,
+        } => {
             if remove {
                 setup::remove_schedule()?;
                 println!("Pianificazione rimossa.");
@@ -265,7 +291,12 @@ async fn main() -> Result<()> {
                 let exe = std::env::current_exe()?.canonicalize()?;
                 println!(
                     "Pianificato: {}.",
-                    setup::install_schedule(&paths, &exe, !no_notify && config.ntfy.is_some())?
+                    setup::install_schedule(
+                        &paths,
+                        &exe,
+                        !no_notify && config.ntfy.is_some(),
+                        !no_dashboard,
+                    )?
                 );
             }
         }
@@ -276,4 +307,42 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// AI categorization of what the rules did not recognize. Prints the outcome; returns false
+/// only when the AI was available but failed (a missing CLI is not an error).
+async fn run_ai(conn: &mut rusqlite::Connection, retry: bool) -> bool {
+    let Some(backend) = ai::detect() else {
+        println!("AI: né `claude` né `codex` trovati nel PATH, categorizzazione AI saltata.");
+        return true;
+    };
+    if retry && let Err(e) = ai::reset_checked(conn) {
+        eprintln!("AI: {e:#}");
+        return false;
+    }
+    match ai::categorize_pending(conn, &backend).await {
+        Ok(None) => {
+            println!("AI: nessun movimento nuovo da categorizzare.");
+            true
+        }
+        Ok(Some(o)) => {
+            println!(
+                "AI ({}): {} movimenti esaminati, {} categorizzati, {} nuove regole{}",
+                o.backend,
+                o.examined,
+                o.categorized,
+                o.rules_created.len(),
+                if o.rules_created.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", o.rules_created.join(", "))
+                }
+            );
+            true
+        }
+        Err(e) => {
+            eprintln!("AI ({}): errore: {e:#}", backend.name());
+            false
+        }
+    }
 }

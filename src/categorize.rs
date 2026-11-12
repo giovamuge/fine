@@ -88,7 +88,11 @@ pub fn normalize_merchant(counterparty: Option<&str>, description: Option<&str>)
     words.join(" ")
 }
 
-fn haystack(merchant: &str, counterparty: Option<&str>, description: Option<&str>) -> String {
+pub(crate) fn haystack(
+    merchant: &str,
+    counterparty: Option<&str>,
+    description: Option<&str>,
+) -> String {
     format!(
         " {} {} {} ",
         merchant,

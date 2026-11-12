@@ -1,0 +1,48 @@
+name: Release
+# Push a tag like v0.1.0: builds the binaries (dashboard included) and publishes them
+# as a GitHub release, which install.sh downloads.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          name=fine-${{ matrix.target }}
+          tar -czf $name.tar.gz -C target/${{ matrix.target }}/release fine
+          shasum -a 256 $name.tar.gz > $name.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fine-${{ matrix.target }}
+          path: fine-${{ matrix.target }}.tar.gz*
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" fine-*.tar.gz* --repo "${{ github.repository }}" --generate-notes

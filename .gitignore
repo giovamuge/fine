@@ -1,5 +1,8 @@
 # build
 /target
+# frontend (generati da build.rs / npm: mai nella repo)
+/web/node_modules
+/web/dist
 
 # dati e segreti locali (mai nella repo)
 *.pem

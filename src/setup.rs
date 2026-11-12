@@ -5,8 +5,8 @@
 //! - schedules sync every 6 hours (4/day = PSD2 limit) and a daily push notification.
 
 use anyhow::{Context, Result, bail};
-use chrono::{Days, Utc};
-use rusqlite::{Connection, params};
+
+use rusqlite::Connection;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -70,70 +70,36 @@ fn open_browser(url: &str) {
 }
 
 pub async fn connect_bank(
-    conn: &Connection,
+    conn: &mut Connection,
     eb: &EnableBankingConfig,
     bank: &str,
     country: &str,
     days: u64,
 ) -> Result<()> {
-    let client = Client::new(eb)?;
-    let redirect = client.redirect_url(&eb.redirect_url).await?;
-    let state = uuid::Uuid::new_v4().to_string();
-    let valid_until =
-        (Utc::now() + Days::new(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let auth = client
-        .start_auth(bank, country, &valid_until, &redirect, &state)
-        .await?;
-    conn.execute(
-        "INSERT INTO pending_auth (state, aspsp, country) VALUES (?1, ?2, ?3)",
-        params![state, bank, country],
-    )?;
+    let pending = crate::connect::start(conn, eb, bank, country, days).await?;
     println!(
         "\nSi apre il browser: autorizza l'accesso in sola lettura.\n{}\n",
-        auth.url
+        pending.url
     );
-    open_browser(&auth.url);
+    open_browser(&pending.url);
     let pasted = prompt(&format!(
-        "Alla fine verrai portato su {redirect}... (la pagina può dare errore, è normale).\nIncolla qui l'indirizzo completo dalla barra del browser: "
+        "Alla fine verrai portato su {}... (la pagina può dare errore, è normale).\nIncolla qui l'indirizzo completo dalla barra del browser: ",
+        pending.redirect
     ));
-    let url = reqwest::Url::parse(&pasted).context("indirizzo non valido")?;
-    let get = |k: &str| {
-        url.query_pairs()
-            .find(|(key, _)| key == k)
-            .map(|(_, v)| v.into_owned())
-    };
-    if let Some(err) = get("error") {
-        bail!(
-            "la banca ha rifiutato l'autorizzazione: {err} {}",
-            get("error_description").unwrap_or_default()
-        );
-    }
-    if get("state").as_deref() != Some(state.as_str()) {
-        bail!("l'indirizzo non appartiene a questa richiesta (state diverso)");
-    }
-    let code = get("code").context("parametro code mancante nell'indirizzo")?;
-    let session = client.create_session(&code).await?;
-    conn.execute("DELETE FROM pending_auth WHERE state = ?1", [&state])?;
-    for a in &session.accounts {
-        let iban = a.account_id.as_ref().and_then(|i| i.iban.clone());
-        conn.execute(
-            "INSERT INTO accounts (uid, iban, name, currency, aspsp, session_id, valid_until)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(uid) DO UPDATE SET iban = excluded.iban, name = excluded.name, currency = excluded.currency,
-               aspsp = excluded.aspsp, session_id = excluded.session_id, valid_until = excluded.valid_until",
-            params![a.uid, iban, a.name, a.currency, bank, session.session_id, session.access.valid_until],
-        )?;
+    for a in crate::connect::finish(conn, eb, &pasted).await? {
         println!(
-            "Collegato: {} {}",
+            "{}: {} {} ({})",
+            if a.renewed { "Rinnovato" } else { "Collegato" },
             a.name.as_deref().unwrap_or(""),
-            iban.as_deref().unwrap_or("")
+            a.iban.as_deref().unwrap_or(""),
+            a.currency
         );
     }
     Ok(())
 }
 
 /// Interactive bank choice from a numbered list.
-pub async fn choose_and_connect(conn: &Connection, eb: &EnableBankingConfig) -> Result<()> {
+pub async fn choose_and_connect(conn: &mut Connection, eb: &EnableBankingConfig) -> Result<()> {
     let client = Client::new(eb)?;
     let country = prompt("Paese della banca [IT]: ").to_uppercase();
     let country = if country.is_empty() {
@@ -276,6 +242,7 @@ pub fn add_to_desktop_config(path: &Path, exe: &str) -> Result<bool> {
 
 pub const LAUNCHD_SYNC: &str = "com.fine.sync";
 pub const LAUNCHD_NOTIFY: &str = "com.fine.notify";
+pub const LAUNCHD_DASHBOARD: &str = "com.fine.dashboard";
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -285,21 +252,33 @@ fn xml_escape(s: &str) -> String {
 
 /// launchd agent running `fine <command>` at the given (hour, minute) times.
 /// launchd runs a missed calendar job once when the Mac wakes up, so no part of the day is lost.
+/// With no times it is a service instead: started at login and restarted if it exits.
 pub fn launchd_plist(
     label: &str,
     exe: &str,
     command: &str,
     times: &[(u32, u32)],
-    data_dir: Option<&str>,
+    env: &[(&str, String)],
     log: &str,
 ) -> String {
-    let intervals: String = times
-        .iter()
-        .map(|(h, m)| format!("    <dict><key>Hour</key><integer>{h}</integer><key>Minute</key><integer>{m}</integer></dict>\n"))
-        .collect();
-    let env = data_dir
-        .map(|d| format!("  <key>EnvironmentVariables</key>\n  <dict><key>FINE_DATA_DIR</key><string>{}</string></dict>\n", xml_escape(d)))
-        .unwrap_or_default();
+    let when = if times.is_empty() {
+        "  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>60</integer>\n".to_string()
+    } else {
+        let intervals: String = times
+            .iter()
+            .map(|(h, m)| format!("    <dict><key>Hour</key><integer>{h}</integer><key>Minute</key><integer>{m}</integer></dict>\n"))
+            .collect();
+        format!("  <key>StartCalendarInterval</key>\n  <array>\n{intervals}  </array>\n")
+    };
+    let env = if env.is_empty() {
+        String::new()
+    } else {
+        let vars: String = env
+            .iter()
+            .map(|(k, v)| format!("<key>{k}</key><string>{}</string>", xml_escape(v)))
+            .collect();
+        format!("  <key>EnvironmentVariables</key>\n  <dict>{vars}</dict>\n")
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -308,10 +287,7 @@ pub fn launchd_plist(
   <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key>
   <array><string>{exe}</string><string>{command}</string></array>
-  <key>StartCalendarInterval</key>
-  <array>
-{intervals}  </array>
-{env}  <key>StandardOutPath</key><string>{log}</string>
+{when}{env}  <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
 </dict>
 </plist>
@@ -325,10 +301,21 @@ pub fn sync_times() -> Vec<(u32, u32)> {
     SYNC_HOURS.iter().map(|h| (*h, SYNC_MINUTE)).collect()
 }
 
-/// Install the schedule. `notify`: also the daily push notification.
-pub fn install_schedule(paths: &Paths, exe: &Path, notify: bool) -> Result<String> {
+/// Install the schedule. `notify`: also the daily push notification;
+/// `dashboard`: keep `fine serve` running in the background (started at login).
+pub fn install_schedule(
+    paths: &Paths,
+    exe: &Path,
+    notify: bool,
+    dashboard: bool,
+) -> Result<String> {
     let exe_s = exe.to_string_lossy().to_string();
-    let data_dir = std::env::var("FINE_DATA_DIR").ok();
+    // The scheduler starts with a minimal environment: keep the user's PATH so the
+    // background sync can find `claude` / `codex` for AI categorization.
+    let env: Vec<(&str, String)> = ["PATH", "FINE_DATA_DIR"]
+        .into_iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k, v)))
+        .collect();
     let log = paths.dir.join("schedule.log").to_string_lossy().to_string();
     if cfg!(target_os = "macos") {
         let agents = directories::BaseDirs::new()
@@ -343,11 +330,14 @@ pub fn install_schedule(paths: &Paths, exe: &Path, notify: bool) -> Result<Strin
         if notify {
             jobs.push((LAUNCHD_NOTIFY, "notify", vec![NOTIFY_TIME]));
         }
+        if dashboard {
+            jobs.push((LAUNCHD_DASHBOARD, "serve", vec![]));
+        }
         for (label, cmd, times) in jobs {
             let plist = agents.join(format!("{label}.plist"));
             std::fs::write(
                 &plist,
-                launchd_plist(label, &exe_s, cmd, &times, data_dir.as_deref(), &log),
+                launchd_plist(label, &exe_s, cmd, &times, &env, &log),
             )?;
             let domain = format!("gui/{uid}");
             let _ = Command::new("launchctl")
@@ -364,7 +354,7 @@ pub fn install_schedule(paths: &Paths, exe: &Path, notify: bool) -> Result<Strin
             }
         }
         Ok(format!(
-            "launchd: sync alle {} ogni giorno{}",
+            "launchd: sync alle {} ogni giorno{}{}",
             SYNC_HOURS
                 .iter()
                 .map(|h| format!("{h:02}:{SYNC_MINUTE:02}"))
@@ -374,12 +364,15 @@ pub fn install_schedule(paths: &Paths, exe: &Path, notify: bool) -> Result<Strin
                 format!(", notifica alle {:02}:{:02}", NOTIFY_TIME.0, NOTIFY_TIME.1)
             } else {
                 String::new()
+            },
+            if dashboard {
+                ", dashboard sempre attiva su http://127.0.0.1:7878"
+            } else {
+                ""
             }
         ))
     } else if cfg!(unix) {
-        let env = data_dir
-            .map(|d| format!("FINE_DATA_DIR={d} "))
-            .unwrap_or_default();
+        let env: String = env.iter().map(|(k, v)| format!("{k}='{v}' ")).collect();
         let hours = SYNC_HOURS
             .iter()
             .map(|h| h.to_string())
@@ -393,6 +386,9 @@ pub fn install_schedule(paths: &Paths, exe: &Path, notify: bool) -> Result<Strin
                 "{} {} * * * {env}{exe_s} notify >> {log} 2>&1 # fine",
                 NOTIFY_TIME.1, NOTIFY_TIME.0
             ));
+        }
+        if dashboard {
+            lines.push(format!("@reboot {env}{exe_s} serve >> {log} 2>&1 # fine"));
         }
         let current = Command::new("crontab")
             .arg("-l")
@@ -434,7 +430,7 @@ pub fn remove_schedule() -> Result<()> {
         let uid = String::from_utf8(Command::new("id").arg("-u").output()?.stdout)?
             .trim()
             .to_string();
-        for label in [LAUNCHD_SYNC, LAUNCHD_NOTIFY] {
+        for label in [LAUNCHD_SYNC, LAUNCHD_NOTIFY, LAUNCHD_DASHBOARD] {
             let _ = Command::new("launchctl")
                 .args(["bootout", &format!("gui/{uid}/{label}")])
                 .output();
@@ -517,7 +513,7 @@ pub async fn init(paths: &Paths, config: &mut Config, yes: bool) -> Result<()> {
     let eb = config.enable_banking()?.clone();
     let accounts: i64 = conn.query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))?;
     if accounts == 0 || (!yes && ask_no("   Vuoi collegare un'altra banca?")) {
-        choose_and_connect(&conn, &eb).await?;
+        choose_and_connect(&mut conn, &eb).await?;
     }
 
     // 2. First sync
@@ -542,6 +538,22 @@ pub async fn init(paths: &Paths, config: &mut Config, yes: bool) -> Result<()> {
         "   Categorizzate automaticamente: {}",
         report.auto_categorized
     );
+    if let Some(backend) = crate::ai::detect() {
+        println!(
+            "   Chiedo a {} di categorizzare il resto...",
+            backend.name()
+        );
+        match crate::ai::categorize_pending(&mut conn, &backend).await {
+            Ok(Some(o)) => println!(
+                "   ✓ AI: {} esaminati, {} categorizzati, {} nuove regole",
+                o.examined,
+                o.categorized,
+                o.rules_created.len()
+            ),
+            Ok(None) => {}
+            Err(e) => println!("   ✗ AI: {e:#} (riprovo al prossimo sync)"),
+        }
+    }
 
     // 3. AI clients
     println!();
@@ -567,7 +579,7 @@ pub async fn init(paths: &Paths, config: &mut Config, yes: bool) -> Result<()> {
         config.ntfy = Some(new_ntfy_topic());
         config.save(paths)?;
     }
-    match install_schedule(paths, &exe, notify) {
+    match install_schedule(paths, &exe, notify, true) {
         Ok(msg) => println!("   Pianificato: {msg}."),
         Err(e) => println!("   Pianificazione non installata: {e:#}"),
     }
@@ -636,12 +648,24 @@ mod tests {
             "/bin/fine",
             "sync",
             &sync_times(),
-            None,
+            &[("PATH", "/usr/bin:/a&b".into())],
             "/tmp/l",
         );
+        assert!(plist.contains("<key>PATH</key><string>/usr/bin:/a&amp;b</string>"));
         for h in hours {
             assert!(plist.contains(&format!("<key>Hour</key><integer>{h}</integer>")));
         }
+        assert!(!plist.contains("KeepAlive"));
+        let service = launchd_plist(
+            "com.fine.dashboard",
+            "/bin/fine",
+            "serve",
+            &[],
+            &[],
+            "/tmp/l",
+        );
+        assert!(service.contains("<key>KeepAlive</key><true/>"));
+        assert!(!service.contains("StartCalendarInterval"));
     }
 
     #[test]

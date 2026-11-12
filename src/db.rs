@@ -97,6 +97,32 @@ CREATE TABLE pending_auth (
 "#,
     // v2: currency of the stored balance (an account may report "XXX" while balances are in EUR)
     "ALTER TABLE accounts ADD COLUMN balance_currency TEXT;",
+    // v3: when the AI last looked at an uncategorized transaction (so it is not asked twice)
+    "ALTER TABLE transactions ADD COLUMN ai_checked_at TEXT;",
+    // v4: free-form tags, many per transaction, with learnable rules (pattern -> tag)
+    r#"
+CREATE TABLE tags (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+CREATE TABLE transaction_tags (
+    transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    tag_id         INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    source         TEXT NOT NULL DEFAULT 'manual',
+    PRIMARY KEY (transaction_id, tag_id)
+);
+CREATE INDEX transaction_tags_tag ON transaction_tags(tag_id);
+CREATE TABLE tag_rules (
+    id      INTEGER PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    hits    INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (pattern, tag_id)
+);
+"#,
+    // v5: stable account identity across consents (renewing gives new uids) and the bank's country
+    "ALTER TABLE accounts ADD COLUMN identification_hash TEXT;
+     ALTER TABLE accounts ADD COLUMN country TEXT;",
 ];
 
 /// Default categories (Italian). (name, kind)

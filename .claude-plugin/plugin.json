@@ -1,0 +1,15 @@
+{
+  "name": "fine",
+  "version": "0.1.0",
+  "description": "Finanza personale sui tuoi conti (Enable Banking, sola lettura): quanto puoi spendere, budget, tag, saldo. Dati solo in locale.",
+  "author": { "name": "giovamuge" },
+  "homepage": "https://github.com/giovamuge/fine",
+  "repository": "https://github.com/giovamuge/fine",
+  "license": "MIT",
+  "keywords": ["finance", "budget", "banking", "psd2", "mcp"],
+  "mcpServers": {
+    "fine": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/fine-mcp.sh"
+    }
+  }
+}

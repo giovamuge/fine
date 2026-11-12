@@ -53,6 +53,8 @@ pub struct Access {
 #[derive(Debug, Deserialize)]
 pub struct AccountResource {
     pub uid: String,
+    /// Stable across sessions: identifies the same account after a consent renewal.
+    pub identification_hash: Option<String>,
     pub account_id: Option<AccountId>,
     pub name: Option<String>,
     pub currency: String,
@@ -215,6 +217,20 @@ impl Client {
                 .json(&json!({ "code": code })),
         )
         .await
+    }
+
+    /// Revoke a session (consent) at the bank. Best effort: the session may already be expired.
+    pub async fn delete_session(&self, session_id: &str) -> Result<()> {
+        let resp = self
+            .http
+            .delete(self.url(&format!("/sessions/{}", enc(session_id))))
+            .bearer_auth(self.jwt()?)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            bail!("Enable Banking {}", resp.status());
+        }
+        Ok(())
     }
 
     pub async fn balances(&self, account_uid: &str) -> Result<Vec<Balance>> {
