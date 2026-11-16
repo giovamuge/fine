@@ -2,173 +2,231 @@
 
 **English** · [Italiano](README.it.md)
 
-**Personal finance on your own bank data, with your own AI.**
-`fine` downloads your account transactions through [Enable Banking](https://enablebanking.com) (PSD2, read-only) and stores them **locally** (SQLite). It categorizes them with rules that learn on their own and tells you every day **how much you can still spend**.
+**Your AI knows how much you can still spend.** Bank transactions synced to your disk, categorized automatically, analyzed by the Claude or ChatGPT subscription you already have. Read-only, local, one Rust executable.
 
-Its "brain" is your **Claude** or **ChatGPT** subscription, through [MCP](https://modelcontextprotocol.io): no paid API needed.
+`fine` downloads your transactions through [Enable Banking](https://enablebanking.com) (PSD2, 2,700+ European banks), stores them in a local SQLite database and exposes them to any [MCP](https://modelcontextprotocol.io) client. No paid API, no payments, no third party holding your data.
 
-- 🏦 **Incremental sync**: your history stays on your disk, and analyses don't use up the 4 daily reads PSD2 allows.
-- 🏷️ **Categorization that learns**: built-in rules for the main Italian merchants, plus the rules you or your AI create with `categorize`.
-- 🤖 **Background AI categorization**: after each sync, transactions no rule recognizes are passed to `claude -p` (or `codex exec`) using your subscription. The AI has no tools and only returns categories, which `fine` validates; when it is confident it creates rules, so next time it isn't needed. Doubtful cases (e.g. transfers to people) are left to you. Manually: `fine categorize`.
-- 💶 **Assistant**: what's left to spend this month, this week and today. It accounts for income, fixed expenses, savings for annual expenses and your savings goal.
-- 🚨 **Alerts**:
-  - budgets exceeded or spent too fast;
-  - upcoming annual expenses;
-  - new recurring subscriptions;
-  - unusual expenses;
-  - bank consent about to expire.
-- 🏷️ **Free-form tags**: as many as you want per transaction (`#london-trip`, `#work`, `#reimbursable`, a person...), independent of the category. Totals per tag, filters, and rules that tag future transactions automatically.
-- 📈 **Balance over time**: current balance per account and daily history, rebuilt from stored transactions, with the change over 7/30/90/365 days.
-- 📆 **Amortization**: a large expense can be spread over N months. Annual expenses become monthly amounts to set aside.
-- 📊 **Mobile-first web dashboard**, embedded in the executable with no external requests, and **push notifications** via [ntfy](https://ntfy.sh).
-- 🦀 **A single Rust executable**, a few MB of RAM: it runs on a Raspberry Pi too.
+> "How much can I spend this week?" · "Which subscriptions could I cancel?" ·
+> "Amortize the laptop over 24 months." · "Budget 300 € a month for restaurants,
+> excluding #work lunches."
 
-> `fine` never moves money: it only uses read access to your accounts (AIS).
+## How it works
 
-The dashboard, notifications and default categories are in Italian; your AI answers in whatever language you use.
+```
+Your assistant ──MCP──▶ fine ──▶ SQLite on your disk
+                         └──────▶ Enable Banking ──PSD2──▶ your bank   (4 times a day)
+```
 
-## Installation
+- **Sync** runs in the background every 6 hours, within the PSD2 limit of 4 reads a day. Questions are answered from the local database.
+- **Categorization** uses rules; what no rule recognizes goes to `claude -p` or `codex exec`, which turns confident answers into new rules.
+- **Left to spend** for the month, week and day accounts for income, fixed expenses, annual expenses, budgets and your savings goal.
+
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/giovamuge/fine/main/install.sh | sh
 ```
 
-It downloads the latest release for macOS or Linux (Intel/ARM), verifies its checksum and puts it in `~/.local/bin`. Alternatively, build from source (you need Rust from [rustup.rs](https://rustup.rs) and Node.js for the dashboard):
+macOS and Linux, Intel and ARM; installs to `~/.local/bin`. From source (needs Rust and Node.js):
 
 ```sh
 cargo install --git https://github.com/giovamuge/fine
 ```
 
-## Quick start: one command
+## Setup
+
+You need a free Enable Banking account and about ten minutes.
+
+### 1. Register an Enable Banking application
+
+At <https://enablebanking.com/cp/applications> create an application:
+
+- environment **Production** (your real accounts);
+- redirect URL `https://localhost/fine`;
+- keep *generate private key* selected, and save.
+
+A `.pem` file downloads once: that is the private key, named after the application id (`<app-id>.pem`). Keep the name and put the file where it will stay, for example `~/.fine/`: `fine` reads it from there on every sync and does not copy it.
+
+### 2. Activate it with your own accounts
+
+Production normally requires a contract, but Enable Banking has a **restricted mode** for your own accounts, allowed for individual non-commercial use:
+
+1. On the (Inactive) application click **Activate by linking accounts**.
+2. Log in at your bank and approve. Repeat for each bank you want.
+3. The application becomes active and the API returns only the accounts you linked.
+
+Read the *Restriction of Use* section of Enable Banking's [Terms of Service](https://enablebanking.com/terms-of-service/): restricted mode is for your own accounts, not for offering a service to others.
+
+### 3. Run the guided setup
 
 ```sh
 fine init
 ```
 
-The guided setup does everything:
+It asks for the `.pem` file, checks it against Enable Banking, lets you pick your bank and opens the bank's page in the browser. After you approve, the bank sends you to `https://localhost/fine?code=...`: the page fails to load, which is expected. Copy the full address from the address bar and paste it in the terminal.
 
-1. **Bank**: it only asks for your Enable Banking `.pem` file (the app id comes from the file name, the redirect URL from the application), then you pick your bank from a list and the browser opens by itself.
-2. **First download** of your transactions, with automatic categorization.
-3. **Registration** of `fine` in Claude Code, Codex and Claude Desktop (the Claude Desktop config is backed up first).
-4. **Automatic sync every 6 hours** (01:07, 07:07, 13:07, 19:07) to cover the whole day within the PSD2 limit of 4 reads per day. Optionally, a **phone notification** at 08:12.
+No certificate to install: the redirect URL must be `https`, but nothing has to answer on it, so `fine` runs no local https server and never touches your system's trust store.
 
-First you need an Enable Banking application. It's free for personal use:
-- create a **Production** one on [enablebanking.com](https://enablebanking.com) and register a redirect URL, e.g. `https://localhost/fine` (it doesn't need to respond);
-- link your accounts from the control panel: the app is activated in *restricted mode*, for **your** accounts only;
-- download the `.pem` key.
+`fine init` then downloads your transactions, registers `fine` in Claude Code, Codex and Claude Desktop, and schedules sync and dashboard.
 
-PSD2 consent lasts at most 180 days, depending on the bank. `fine` warns you two weeks before it expires; to renew it, just run `fine connect`.
+### Renewing consent
 
-If a bank grants less history than requested, `fine` starts from 90 days and, if needed, retries with 30 by itself. A failed sync never goes unnoticed: it becomes a critical alert in `fine status`, in the dashboard, in notifications and in the AI's answers.
+Consent lasts up to 180 days, depending on the bank. `fine` warns you two weeks before it expires; renew it with `fine connect` or from the dashboard. History is kept, without duplicates.
 
-## Using it with your AI (MCP)
+## Connect your AI
 
-**Claude Code, as a plugin** (recommended): it registers the MCP server by itself and updates with `claude plugin update`.
+`fine init` already does this. By hand:
+
+Claude Code, as a plugin (install `fine` first):
+
 ```
 /plugin install fine --marketplace giovamuge/fine
 ```
-Answer `y` to add the marketplace and choose the scope. The plugin doesn't contain the executable: install `fine` first (above). In the desktop app: **+** next to the prompt › Plugins › Add marketplace `giovamuge/fine` › Add plugin.
 
-**Claude Code, manually**
+Claude Code, as an MCP server:
+
 ```sh
 claude mcp add fine -- fine mcp
 ```
 
-**Claude Desktop**: add to `claude_desktop_config.json`:
+Claude Desktop, in `claude_desktop_config.json`:
+
 ```json
 { "mcpServers": { "fine": { "command": "/path/to/fine", "args": ["mcp"] } } }
 ```
 
-**Codex CLI (ChatGPT)**: add to `~/.codex/config.toml`:
+Codex CLI, in `~/.codex/config.toml`:
+
 ```toml
 [mcp_servers.fine]
 command = "fine"
 args = ["mcp"]
 ```
 
-Then ask, for example:
-- *"How am I doing this month? How much can I spend this week?"*
-- *"Categorize the pending transactions"*: there's also the `categorize-pending` prompt.
-- *"Help me set up my monthly plan"*, with the `monthly-plan` prompt: salary, rent, bills, annual expenses, budgets, savings goal.
-- *"Amortize the laptop purchase over 24 months"*
-- *"Which subscriptions could I cancel?"*
-- *"Tag everything from August 1 to 7 as london-trip and tell me how much it cost"*
-- *"How has my balance changed over the last 3 months?"*
+## What you get
 
-**Available tools:** `status`, `list_accounts`, `sync`, `search_transactions`, `monthly_summary`, `trend`, `list_uncategorized`, `categorize`, `list_categories`, `upsert_category`, `update_category`, `delete_category`, `list_rules`, `delete_rule`, `set_budget`, `budget_status`, `recurring`, `upsert_planned`, `delete_planned`, `list_planned`, `sinking_funds`, `amortize`, `set_savings_goal`, `tag_transactions`, `untag_transactions`, `list_tags`, `delete_tag`, `balance_history`.
+| Tool | What it does |
+|---|---|
+| `status` | left to spend this month, week and day, with alerts |
+| `list_accounts`, `sync`, `balance_history` | accounts, manual sync, balance over time |
+| `search_transactions`, `monthly_summary`, `trend`, `recurring` | transactions, monthly totals, 12-month trend, subscriptions |
+| `list_uncategorized`, `categorize`, `list_rules`, `delete_rule` | categorization with rules that learn |
+| `list_categories`, `upsert_category`, `update_category`, `delete_category` | customizable categories |
+| `tag_transactions`, `untag_transactions`, `list_tags`, `delete_tag` | free-form tags, many per transaction |
+| `upsert_budget`, `preview_budget`, `delete_budget`, `budget_status` | rule-based budgets and goals |
+| `upsert_planned`, `delete_planned`, `list_planned`, `sinking_funds`, `set_savings_goal` | salary, fixed and annual expenses, savings goal |
+| `amortize` | spread a large expense over N months |
+
+**Prompts**: `weekly-review`, `categorize-pending`, `monthly-plan`.
+
+**Alerts**: budgets exceeded or spent too fast, upcoming annual expenses, new subscriptions, unusual expenses, expiring consent, failed sync.
+
+Default categories and dashboard are in Italian; your AI answers in your language.
 
 ## Dashboard
 
 ```sh
-fine serve                       # http://127.0.0.1:7878
+fine serve   # http://127.0.0.1:7878
 ```
 
-`fine init` and `fine schedule` also install it as an always-on service (it starts at login and restarts if it stops; it uses about ten MB of memory and no CPU when idle): just open http://127.0.0.1:7878. To opt out: `fine schedule --no-dashboard`.
+A mobile-first web app embedded in the executable, with no external requests: overview, transactions, budgets, analysis, categories and accounts. `fine init` installs it as an always-on service.
 
-To open it from your phone, the recommended way is [Tailscale](https://tailscale.com) (free): set a password and expose it on your private network.
+To open it from your phone, set a password and expose it on a private network such as [Tailscale](https://tailscale.com):
 
 ```sh
 fine setup --dashboard-password '<at least 12 characters>'
-fine serve --bind 0.0.0.0:7878   # reachable as http://<mac-name>:7878 in the tailnet
+fine serve --bind 0.0.0.0:7878
 ```
 
-On any address other than localhost, `fine` refuses to start without a password. Don't expose it directly to the Internet.
+`fine` refuses to listen beyond localhost without a password. Don't expose it directly to the Internet.
 
-The dashboard is built with React and [shadcn/ui](https://ui.shadcn.com). It's designed for the phone (bottom navigation bar, bottom sheets) but works well on desktop too; it follows the system light/dark theme (with a toggle to force it), is keyboard-navigable and makes no external requests: everything is embedded in the executable. Five sections:
-
-- **Overview** (*Panoramica*): what's left to spend this month front and center, with week and day; the spending-pace bar (the marker shows where you should be today); alerts (a failed sync is impossible to miss); balance with history and 7/30/90/365-day changes; the budgets closest to their limit.
-- **Transactions** (*Movimenti*): instant search; filters by period, category, tag and "uncategorized" (all in the URL, so they're shareable and work with "back"); category editable right in the row; per-transaction detail with the explicit choice *"also use this category for future transactions from this merchant"*, tags with suggestions (and an optional automatic rule), amortization over N months; multi-select to categorize or tag many transactions at once.
-- **Analysis** (*Analisi*): spending by category for the month (each row links to its transactions), income/expenses over the last 12 months, balance over time with tooltips and a table view, budgets, savings for annual expenses, totals per tag by period, recurring expenses.
-- **Categories** (*Categorie*): 35 built-in categories (expenses, income, transfers, savings), all customizable: name, kind, icon (any emoji) and color; for each, the automatic rules that assign it, deletable one by one. A category is deleted either by moving its transactions, rules and budgets into another one (a merge) or by leaving them uncategorized, for the AI to try again. A new category can also be created on the fly from the transaction picker.
-- **Accounts** (*Conti*): one card per account with balance, IBAN, consent expiry (warning from 14 days before), result of the last sync with error details; linking a new bank in four guided steps (choose, authorize on the bank's page, paste the final URL, done); **consent renewal** (history is kept, no duplicates); rename; removal with explicit confirmation (it deletes the account's transactions from this computer; consent is revoked at the bank if no other account needs it); and "Sync now" with a summary of the result.
-
-Descriptions coming from the bank are always shown as text, never interpreted as HTML; scripts are served only by the executable (`Content-Security-Policy: script-src 'self'`).
-
-## Automatic updates and notifications
-
-`fine init` already installs everything. To manage it manually:
+## Scheduling
 
 ```sh
-fine schedule                  # sync every 6 hours, always-on dashboard (+ notification if ntfy is configured)
-fine schedule --no-dashboard   # same, without the background dashboard
+fine schedule                  # sync every 6 hours, always-on dashboard
+fine schedule --no-dashboard   # same, without the dashboard
 fine schedule --remove         # removes everything
 ```
 
-- **macOS**: launchd agents `com.fine.sync`, `com.fine.notify` and `com.fine.dashboard`. If the Mac is asleep at the scheduled time, the sync runs when it wakes up.
-- **Linux**: crontab lines marked `# fine` (the dashboard with `@reboot`).
-- **Safety net**: `fine status`, the MCP `status` tool and the dashboard sync by themselves if the data is more than 6 hours old.
-- **Logs**: in `~/.fine/schedule.log`.
-- **Notifications**: with ntfy you get them in the free app, by subscribing to the secret topic generated by `fine init`.
+launchd agents on macOS, crontab lines on Linux; logs in `~/.fine/schedule.log`.
 
-For a natural-language briefing, using your subscription rather than an API:
+## Self-hosting on a server
+
+A small Linux box (a VPS, a Raspberry Pi) keeps syncing while your computer is off. Everything is done over SSH.
+
+**1. Install and set up.** Install with the script above, copy the key and run the setup:
+
 ```sh
-claude -p "Use fine: give me today's financial briefing in 5 lines"
+ssh you@server mkdir -p .fine
+scp <app-id>.pem you@server:.fine/
+ssh you@server
+fine init
 ```
+
+The server has no browser: `fine init` prints the bank link. Open it on your computer, approve, and paste the final `https://localhost/fine?code=...` address back into the SSH session.
+
+**2. Scheduling.** `fine init` adds crontab lines for the sync every 6 hours and the dashboard at boot (`crontab -l` shows them, marked `# fine`). Times follow the server's time zone.
+
+**3. AI categorization.** Background categorization needs Claude Code or Codex installed and signed in on the server. Without them only rules apply, and your assistant categorizes the rest when you ask.
+
+**4. Dashboard.** It speaks plain HTTP with a password (HTTP Basic), so keep it on `127.0.0.1` and put TLS in front:
+
+```sh
+fine setup --dashboard-password '<at least 12 characters>'
+```
+
+- [Caddy](https://caddyserver.com), two lines: `YOUR-HOST { reverse_proxy localhost:7878 }`;
+- or [Tailscale](https://tailscale.com): `tailscale serve 7878`, reachable only from your devices.
+
+Once set, the password is required on localhost too, because a proxy or tunnel connects from there. Never publish port 7878 itself.
+
+**5. Your assistant.** The MCP server speaks stdio, so run it over SSH from your computer (key-based login, full path to the executable):
+
+```sh
+claude mcp add fine -- ssh you@server .local/bin/fine mcp
+```
+
+```json
+{ "mcpServers": { "fine": { "command": "ssh", "args": ["you@server", ".local/bin/fine", "mcp"] } } }
+```
+
+There is no remote (HTTP) MCP endpoint yet, so claude.ai on the web and phone apps cannot connect to it.
+
+**6. Backup.** Everything is in `~/.fine/`: database, configuration and key. Back it up to avoid re-consenting; delete it to forget everything.
 
 ## How "left to spend" is computed
 
 ```
 income for the month (received + expected)
-− fixed expenses for the month (planned weekly/monthly, paid or still due)
-− 1/12 of each planned annual expense (set aside)
+− fixed expenses for the month
+− 1/12 of each planned annual expense
 − savings goal
 = variable budget
 − variable expenses so far
+− unspent part of budgets marked "reserve"
 = left to spend  →  ÷ days remaining = left to spend per day
 ```
 
-**Income:** if you haven't planned your salary, `fine` uses the average of the last 3 months.
+Without a planned salary, income is the average of the last 3 months. An amortized purchase weighs 1/N per month.
 
-**Annual expenses:** paying a planned annual expense (e.g. insurance) doesn't sink the month it lands in. It's already covered by the monthly amounts.
+## Budgets
 
-**Amortization:** an amortized purchase weighs 1/N per month.
+A budget is a goal (`max_spend`, `min_save`, `min_income`), an amount, a period (`week`, `month`, `quarter`, `year`, `rolling`, `custom`) and a rule combining categories, tags, text, accounts, amounts and dates with `all`, `any`, `not`. Optional rollover, alert thresholds and `reserve`.
+
+```json
+{ "name": "Leisure", "amount": 300, "period": { "type": "month", "start_day": 27 }, "rollover": "surplus",
+  "rule": { "all": [ { "category": ["Ristoranti e bar", "Svago"] }, { "not": { "tag": ["lavoro"] } } ] } }
+```
+
+Create them by asking your AI or in the dashboard's visual editor.
 
 ## Privacy and security
 
-- Data stays in `~/.fine/`, or in `FINE_DATA_DIR` if you set it, with 0600 permissions.
-- Analyses (budgets, left to spend, trends) only use **EUR** transactions. Accounts in other currencies are still synced and can be browsed.
-- When you use a cloud AI, the transactions it reads are sent to its provider. To keep everything local, use an MCP client with an Ollama model.
-- Transaction descriptions are untrusted text: `fine` returns them as data and tells the AI never to follow instructions found in them.
+- `fine` never moves money: it only has read access to your accounts.
+- Data stays in `~/.fine/` (or `FINE_DATA_DIR`) with 0600 permissions. Delete the folder to forget everything.
+- A cloud AI sends the transactions it reads to its provider. To keep everything local, use an MCP client with an Ollama model.
+- Bank descriptions are untrusted text: returned as data, never interpreted as HTML, and the AI is told not to follow instructions in them.
+- Analyses only use **EUR** transactions; accounts in other currencies are synced and browsable.
 
 ## Development
 
@@ -176,19 +234,13 @@ income for the month (received + expected)
 cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
-**Frontend.** The dashboard is a React + TypeScript app (Vite, Tailwind CSS 4, [shadcn/ui](https://ui.shadcn.com) components in `web/src/components/ui`, added with `npx shadcn@latest add <name>`) in `web/`. Building `fine` also needs **Node.js (LTS) with npm**: `build.rs` runs `npm ci` and `npm run build` by itself when the sources in `web/` change, and the output (`web/dist`, ignored by git) is embedded in the executable. Without Node you can still build with `FINE_SKIP_WEB_BUILD=1` (the dashboard shows a placeholder page; CLI and MCP are unaffected).
-
-To work on the frontend with hot reload:
+The dashboard is a React + TypeScript app in `web/`; `build.rs` builds it with npm and embeds it. Without Node, build with `FINE_SKIP_WEB_BUILD=1`. For hot reload:
 
 ```sh
-fine serve                     # the Rust API on http://127.0.0.1:7878
-cd web && npm install && npm run dev   # Vite on http://localhost:5173, proxying /api to the Rust server
+fine serve                             # API on http://127.0.0.1:7878
+cd web && npm install && npm run dev   # Vite on http://localhost:5173
 ```
 
-If the Rust server listens elsewhere: `FINE_API=http://127.0.0.1:7899 npm run dev`. Type checking: `npm run check` (`tsc --noEmit`, also in CI).
-
-**Release.** A `vX.Y.Z` tag triggers `.github/workflows/release.yml`: it builds the binaries (macOS and Linux, Intel and ARM, dashboard included) and publishes them as a GitHub release, which `install.sh` downloads from. Before tagging, align the version in `Cargo.toml` and `.claude-plugin/plugin.json`.
-
-**Claude Code plugin.** The repository is also a marketplace: `.claude-plugin/marketplace.json` lists the `fine` plugin (the repo root), `.claude-plugin/plugin.json` registers the MCP server through `scripts/fine-mcp.sh`, which finds the executable even outside the PATH. Validate with `claude plugin validate .`.
+A `vX.Y.Z` tag publishes the release binaries; align the version in `Cargo.toml` and `.claude-plugin/plugin.json` first.
 
 Inspired by [BankMCP](https://github.com/noskillish/bankmcp) (MIT). License: [MIT](LICENSE).
