@@ -16,6 +16,8 @@ permissions:
 concurrency: release
 jobs:
   version:
+    # Only the repository owner publishes releases (collaborators with write access could run it).
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
