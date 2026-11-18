@@ -538,7 +538,7 @@ impl ServerHandler for FineServer {
                 .enable_prompts()
                 .build(),
         )
-        .with_server_info(Implementation::new("fine", env!("CARGO_PKG_VERSION")))
+        .with_server_info(Implementation::new("fine", crate::VERSION))
         .with_instructions(INSTRUCTIONS)
     }
 }

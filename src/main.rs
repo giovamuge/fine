@@ -9,7 +9,7 @@ use fine::{ai, assistant, db, enablebanking, mcp, notify, ops, setup, sync, web}
 #[derive(Parser)]
 #[command(
     name = "fine",
-    version,
+    version = fine::VERSION,
     about = "Finanza personale sui tuoi dati bancari, con la tua AI"
 )]
 struct Cli {

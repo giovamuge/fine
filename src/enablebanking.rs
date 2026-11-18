@@ -101,7 +101,7 @@ impl Client {
     pub fn with_key(base: &str, app_id: &str, key: EncodingKey) -> Self {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
-            .user_agent(concat!("fine/", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("fine/{}", crate::VERSION))
             .build()
             .expect("http client");
         Self {

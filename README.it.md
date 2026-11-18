@@ -239,6 +239,6 @@ fine serve                             # API su http://127.0.0.1:7878
 cd web && npm install && npm run dev   # Vite su http://localhost:5173
 ```
 
-Per fare una release basta alzare la versione in `Cargo.toml` (e in `.claude-plugin/plugin.json`): al push successivo su `main` il workflow Release compila i binari e li pubblica come `vX.Y.Z`, creando il tag.
+Le versioni sono `MAJOR.MINOR.BUILD`. Ogni push su `main` che passa la CI diventa una release: il workflow Release compila i binari e li pubblica come `vMAJOR.MINOR.BUILD`, dove `BUILD` conta le release di quella `MAJOR.MINOR` (0, 1, 2…). `MAJOR.MINOR` si sceglie a mano in `Cargo.toml` (e in `.claude-plugin/plugin.json`), lasciando `.0` come patch.
 
 Ispirato a [BankMCP](https://github.com/noskillish/bankmcp) (MIT). Licenza: [MIT](LICENSE).

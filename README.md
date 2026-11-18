@@ -241,6 +241,6 @@ fine serve                             # API on http://127.0.0.1:7878
 cd web && npm install && npm run dev   # Vite on http://localhost:5173
 ```
 
-Bumping the version in `Cargo.toml` (and `.claude-plugin/plugin.json`) is all it takes to release: on the next push to `main` the Release workflow builds the binaries and publishes them as `vX.Y.Z`, creating the tag.
+Versions are `MAJOR.MINOR.BUILD`. Every push to `main` that passes CI is released automatically: the Release workflow builds the binaries and publishes them as `vMAJOR.MINOR.BUILD`, where `BUILD` counts the releases of that `MAJOR.MINOR` (0, 1, 2…). `MAJOR.MINOR` is chosen by hand in `Cargo.toml` (and `.claude-plugin/plugin.json`), keeping `.0` as the patch.
 
 Inspired by [BankMCP](https://github.com/noskillish/bankmcp) (MIT). License: [MIT](LICENSE).
