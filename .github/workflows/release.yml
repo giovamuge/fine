@@ -1,53 +1,42 @@
 name: Release
-# Every green CI run on main publishes a release, versioned MAJOR.MINOR.BUILD:
-# MAJOR.MINOR comes from Cargo.toml (changed by hand when it is time for the next version),
-# BUILD counts the releases of that MAJOR.MINOR (0, 1, 2, ...). The tag vX.Y.Z is created on the
-# released commit; install.sh downloads the latest release.
+# Builds the binaries (dashboard included) and publishes them as a GitHub release, which
+# install.sh downloads. Start it by hand from Actions → Release → Run workflow, giving the
+# version (e.g. 0.3.0): the tag vX.Y.Z is created on the chosen branch. Pushing a tag like v0.3.0
+# works too.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Versione da pubblicare, es. 0.3.0"
+        required: true
+  push:
+    tags: ["v*"]
 permissions:
   contents: write
 concurrency: release
 jobs:
   version:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.v.outputs.tag }}
       version: ${{ steps.v.outputs.version }}
-      sha: ${{ steps.v.outputs.sha }}
-      new: ${{ steps.v.outputs.new }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 0
       - id: v
+        env:
+          INPUT: ${{ inputs.version || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sha=$(git rev-parse HEAD)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          # A commit is released once (re-runs of the same CI do not make a new build).
-          if git tag --points-at "$sha" | grep -q '^v'; then
-            echo "new=false" >> "$GITHUB_OUTPUT"
-            echo "$sha is already released as $(git tag --points-at "$sha" | grep '^v' | head -n 1)"
-            exit 0
+          version="${INPUT#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::versione non valida: \"$INPUT\" (usa MAJOR.MINOR.PATCH, es. 0.3.0)"
+            exit 1
           fi
-          base=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-          mm=${base%.*}
-          last=$(git tag -l "v$mm.*" | sed "s/^v$mm\.//" | grep -E '^[0-9]+$' | sort -n | tail -n 1)
-          build=$(( ${last:--1} + 1 ))
-          version="$mm.$build"
+          if gh release view "v$version" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "::error::la release v$version esiste già"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "new=true" >> "$GITHUB_OUTPUT"
-          echo "next release: v$version"
   build:
     needs: version
-    if: needs.version.outputs.new == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -58,8 +47,6 @@ jobs:
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -89,4 +76,4 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ needs.version.outputs.tag }}" fine-*.tar.gz* --repo "${{ github.repository }}" --target "${{ needs.version.outputs.sha }}" --generate-notes
+        run: gh release create "v${{ needs.version.outputs.version }}" fine-*.tar.gz* --repo "${{ github.repository }}" --target "${{ github.sha }}" --generate-notes

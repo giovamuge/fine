@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    // Released builds get MAJOR.MINOR.BUILD from the Release workflow (the build number counts
-    // the releases of that MAJOR.MINOR); local builds use the version in Cargo.toml.
+    // Released builds get the version typed when starting the Release workflow; local builds
+    // use the one in Cargo.toml.
     println!("cargo:rerun-if-env-changed=FINE_RELEASE_VERSION");
     let version = std::env::var("FINE_RELEASE_VERSION")
         .ok()

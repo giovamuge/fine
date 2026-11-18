@@ -1,6 +1,6 @@
 //! fine — personal finance on your own bank data, powered by your AI subscription via MCP.
 
-/// The version of this build: MAJOR.MINOR.BUILD for releases (see build.rs).
+/// The version of this build: the release's for published binaries (see build.rs).
 pub const VERSION: &str = env!("FINE_VERSION");
 
 pub mod ai;
