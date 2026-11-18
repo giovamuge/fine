@@ -6,19 +6,89 @@ export type AlertLevel = "info" | "warning" | "critical";
 export interface Alert {
   level: AlertLevel;
   message: string;
+  /** What it is about (see assistant.rs): picks the page to link. */
+  kind: string;
 }
 
-export type BudgetState = "ok" | "attenzione" | "sforato";
+/** max_spend: ok/attenzione/sforato; min_save, min_income: in_linea/indietro/raggiunto/mancato. */
+export type BudgetState = "ok" | "attenzione" | "sforato" | "in_linea" | "indietro" | "raggiunto" | "mancato" | "sospeso";
+
+export type BudgetGoal = "max_spend" | "min_save" | "min_income";
+
+export type BudgetPeriod =
+  | { type: "week"; start_weekday?: number }
+  | { type: "month"; start_day?: number }
+  | { type: "quarter" }
+  | { type: "year"; start_month?: number }
+  | { type: "rolling"; days: number }
+  | { type: "custom"; from: string; to: string };
+
+/** Rule tree (src/budgets.rs `Rule`): one key per node. */
+export type BudgetRule =
+  | { all: BudgetRule[] }
+  | { any: BudgetRule[] }
+  | { not: BudgetRule }
+  | { category: string[] }
+  | { category_kind: CategoryKind[] }
+  | { tag: string[] }
+  | { text: string[] }
+  | { account: string[] }
+  | { amount: { min?: number; max?: number } }
+  | { direction: "out" | "in" }
+  | { weekday: number[] }
+  | { day_of_month: { from: number; to: number } }
+  | { uncategorized: boolean }
+  | { fixed: boolean };
+
+export interface Budget {
+  name: string;
+  goal?: BudgetGoal;
+  rule?: BudgetRule;
+  period: BudgetPeriod;
+  amount: number;
+  rollover?: "none" | "surplus" | "deficit" | "both";
+  rollover_cap?: number;
+  basis?: "amortized" | "cash";
+  alerts?: number[];
+  pace_alert?: boolean;
+  reserve?: boolean;
+  enabled?: boolean;
+  note?: string;
+}
+
+export interface BudgetTx {
+  id: number;
+  date: string;
+  amount: number;
+  merchant: string;
+  category: string | null;
+}
 
 export interface BudgetStatus {
-  category: string;
-  period: "week" | "month" | "year";
+  id: number;
+  name: string;
+  goal: BudgetGoal;
+  period_label: string;
+  rule_summary: string;
+  start: string;
+  end: string;
+  phase: "upcoming" | "active" | "ended";
+  amount: number;
+  carried: number;
   limit: number;
-  spent: number;
+  value: number;
   remaining: number;
   used: number;
   elapsed: number;
+  projected: number | null;
+  per_day: number | null;
   state: BudgetState;
+  thresholds_reached: number[];
+  reserved: number;
+  history: { start: string; end: string; limit: number; value: number }[];
+  problems: string[];
+  budget: Budget;
+  transactions?: BudgetTx[];
 }
 
 export interface Status {
@@ -35,6 +105,7 @@ export interface Status {
   savings_goal: number;
   variable_budget: number;
   variable_spent: number;
+  reserved: number;
   available_month: number;
   available_per_day: number;
   available_week: number;
@@ -225,6 +296,8 @@ export interface TxView {
   amortized_months: number | null;
   account: string;
   tags: string[];
+  /** The other half of a reconciled PayPal payment, already described. */
+  reconciled: string | null;
 }
 
 export interface TagView {

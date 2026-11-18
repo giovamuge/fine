@@ -3,8 +3,9 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { compact, euro, fmtDateShort, fmtDateShortYear } from "@/lib/format";
 import type { BalancePoint } from "@/lib/types";
+import { t } from "@/lib/i18n";
 
-const config = { balance: { label: "Saldo", color: "var(--chart-3)" } } satisfies ChartConfig;
+const config = { balance: { label: t("Saldo"), color: "var(--chart-3)" } } satisfies ChartConfig;
 
 export function BalanceChart({ points, showTable }: { points: BalancePoint[]; showTable?: boolean }) {
   if (showTable) {
@@ -15,8 +16,8 @@ export function BalanceChart({ points, showTable }: { points: BalancePoint[]; sh
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Data</TableHead>
-              <TableHead className="text-right">Saldo</TableHead>
+              <TableHead>{t("Data")}</TableHead>
+              <TableHead className="text-right">{t("Saldo")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -32,7 +33,7 @@ export function BalanceChart({ points, showTable }: { points: BalancePoint[]; sh
     );
   }
   return (
-    <ChartContainer config={config} className="aspect-auto h-64 w-full" role="img" aria-label="Andamento del saldo">
+    <ChartContainer config={config} className="aspect-auto h-64 w-full" role="img" aria-label={t("Andamento del saldo")}>
       <AreaChart data={points} margin={{ left: 4, right: 8, top: 8 }}>
         <defs>
           <linearGradient id="fillBalance" x1="0" y1="0" x2="0" y2="1">

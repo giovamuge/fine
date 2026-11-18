@@ -17,8 +17,15 @@ import { euro, fmtDate, integer } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import type { TxView } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
-const BY: Record<string, string> = { manual: "a mano", rule: "da una regola", ai: "dall'AI", learned: "da una regola" };
+const BY: Record<string, string> = {
+  manual: t("assegnata a mano"),
+  rule: t("assegnata da una regola"),
+  ai: t("assegnata dall'AI"),
+  learned: t("assegnata da una regola"),
+  paypal: t("assegnata riconciliando il pagamento PayPal"),
+};
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -64,11 +71,11 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx?.id]);
 
-  const t = tx ?? shown;
-  if (!t) return null;
-  const title = t.merchant || t.counterparty || "Movimento";
-  const canRule = (t.merchant || "").replace(/[^\p{L}\p{N}]/gu, "").length >= 3;
-  const catChanged = cat !== (t.category ?? "");
+  const item = tx ?? shown;
+  if (!item) return null;
+  const title = item.merchant || item.counterparty || t("Movimento");
+  const canRule = (item.merchant || "").replace(/[^\p{L}\p{N}]/gu, "").length >= 3;
+  const catChanged = cat !== (item.category ?? "");
 
   const run = async (what: string, fn: () => Promise<string>) => {
     setBusy(what);
@@ -85,44 +92,51 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
 
   const applyCategory = () =>
     run("cat", async () => {
-      const r = await api.categorize([t.id], cat, learn && canRule);
-      if (r.rule_pattern) return `«${cat}» assegnata. Regola «${r.rule_pattern}» creata${r.auto_categorized ? `: ${integer(r.auto_categorized)} altri movimenti sistemati` : ""}.`;
-      return `«${cat}» assegnata.`;
+      const r = await api.categorize([item.id], cat, learn && canRule);
+      if (r.rule_pattern)
+        return r.auto_categorized
+          ? t("«{cat}» assegnata. Regola «{rule}» creata: {n} altri movimenti sistemati.", { cat, rule: r.rule_pattern, n: integer(r.auto_categorized) })
+          : t("«{cat}» assegnata. Regola «{rule}» creata.", { cat, rule: r.rule_pattern });
+      return t("«{cat}» assegnata.", { cat });
     });
 
   const addTag = (name: string) =>
     run("tag", async () => {
-      const r = await api.tag([t.id], [name], tagRule && canRule);
-      return r.rule_pattern ? `#${name} aggiunto, anche ai futuri movimenti di «${r.rule_pattern}»${r.auto_tagged ? ` (${integer(r.auto_tagged)} già taggati)` : ""}.` : `#${name} aggiunto.`;
+      const r = await api.tag([item.id], [name], tagRule && canRule);
+      if (!r.rule_pattern) return t("#{tag} aggiunto.", { tag: name });
+      return r.auto_tagged
+        ? t("#{tag} aggiunto, anche ai futuri movimenti di «{rule}» ({n} già taggati).", { tag: name, rule: r.rule_pattern, n: integer(r.auto_tagged) })
+        : t("#{tag} aggiunto, anche ai futuri movimenti di «{rule}».", { tag: name, rule: r.rule_pattern });
     });
 
   const removeTag = (name: string) =>
     run("tag", async () => {
-      await api.untag([t.id], [name]);
-      return `#${name} rimosso.`;
+      await api.untag([item.id], [name]);
+      return t("#{tag} rimosso.", { tag: name });
     });
 
   const applyAmortize = () =>
     run("amort", async () => {
-      await api.amortize(t.id, months);
-      return months > 1 ? `Spesa spalmata su ${months} mesi.` : "Ammortamento rimosso.";
+      await api.amortize(item.id, months);
+      return months > 1 ? t("Spesa spalmata su {n} mesi.", { n: months }) : t("Ammortamento rimosso.");
     });
 
-  const category = t.category ? categoryByName.get(t.category.toLowerCase()) : undefined;
+  const category = item.category ? categoryByName.get(item.category.toLowerCase()) : undefined;
   const facts: [string, ReactNode][] = [
-    ["Data", fmtDate(t.date)],
-    ...(t.counterparty && t.counterparty !== t.merchant ? ([["Controparte", t.counterparty]] as [string, ReactNode][]) : []),
-    ...(t.description ? ([["Descrizione", t.description]] as [string, ReactNode][]) : []),
-    ["Conto", t.account],
-    ...(t.category && t.categorized_by ? ([["Categoria", `assegnata ${BY[t.categorized_by] ?? t.categorized_by}`]] as [string, ReactNode][]) : []),
+    [t("Data"), fmtDate(item.date)],
+    ...(item.counterparty && item.counterparty !== item.merchant ? ([[t("Controparte"), item.counterparty]] as [string, ReactNode][]) : []),
+    ...(item.description ? ([[t("Descrizione"), item.description]] as [string, ReactNode][]) : []),
+    [t("Conto"), item.account],
+    ...(item.reconciled ? ([["PayPal", item.reconciled]] as [string, ReactNode][]) : []),
+    ...(item.category && item.categorized_by ? ([[t("Categoria"), BY[item.categorized_by] ?? item.categorized_by]] as [string, ReactNode][]) : []),
   ];
 
   return (
-    <ResponsiveDialog open={!!tx} onClose={onClose} title={title} description={fmtDate(t.date)}>
+    <ResponsiveDialog open={!!tx} onClose={onClose} title={title} description={fmtDate(item.date)}>
       <div className="flex flex-col gap-5 pb-2">
         <div className="flex items-center gap-3">
           <CategoryIcon category={category} className="size-11 rounded-xl text-xl" />
-          <div className={cn("tabular text-3xl font-semibold tracking-tight", t.amount > 0 && "text-positive")}>{t.amount > 0 ? `+${euro(t.amount)}` : euro(t.amount)}</div>
+          <div className={cn("tabular text-3xl font-semibold tracking-tight", item.amount > 0 && "text-positive")}>{item.amount > 0 ? `+${euro(item.amount)}` : euro(item.amount)}</div>
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           {facts.map(([k, v]) => (
@@ -134,60 +148,60 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
         </dl>
 
         <Separator />
-        <Section title="Categoria">
-          <CategoryPicker value={cat} onChange={setCat} allowNone ariaLabel="Categoria" />
+        <Section title={t("Categoria")}>
+          <CategoryPicker value={cat} onChange={setCat} allowNone ariaLabel={t("Categoria")} />
           {canRule && (
             <CheckRow
               id="learn"
               checked={learn}
               onChange={setLearn}
-              title={`Usa questa categoria anche per i prossimi movimenti di «${t.merchant}»`}
-              hint="Crea una regola: vale per i movimenti futuri e per quelli passati ancora da categorizzare."
+              title={t("Usa questa categoria anche per i prossimi movimenti di «{merchant}»", { merchant: item.merchant })}
+              hint={t("Crea una regola: vale per i movimenti futuri e per quelli passati ancora da categorizzare.")}
             />
           )}
           <div>
             <Button disabled={!cat || (!catChanged && !learn) || busy !== null} onClick={applyCategory}>
               {busy === "cat" && <Loader2 className="animate-spin" />}
-              {learn ? "Applica e crea regola" : "Applica"}
+              {learn ? t("Applica e crea regola") : t("Applica")}
             </Button>
           </div>
         </Section>
 
         <Separator />
-        <Section title="Tag">
-          {t.tags.length ? (
-            <TagChips tags={t.tags} onRemove={removeTag} />
+        <Section title={t("Tag")}>
+          {item.tags.length ? (
+            <TagChips tags={item.tags} onRemove={removeTag} />
           ) : (
-            <p className="text-sm text-muted-foreground">Nessun tag. I tag sono liberi (#vacanza-londra, #lavoro, #rimborsabile…) e indipendenti dalla categoria.</p>
+            <p className="text-sm text-muted-foreground">{t("Nessun tag. I tag sono liberi (#vacanza-londra, #lavoro, #rimborsabile…) e indipendenti dalla categoria.")}</p>
           )}
-          <TagAdd suggestions={tagSuggestions.filter((s) => !t.tags.includes(s))} onAdd={addTag} disabled={busy !== null} />
+          <TagAdd suggestions={tagSuggestions.filter((s) => !item.tags.includes(s))} onAdd={addTag} disabled={busy !== null} />
           {canRule && (
-            <CheckRow id="tagrule" checked={tagRule} onChange={setTagRule} title={`Tagga automaticamente anche i prossimi movimenti di «${t.merchant}»`} hint="Vale per i tag che aggiungi da ora." />
+            <CheckRow id="tagrule" checked={tagRule} onChange={setTagRule} title={t("Tagga automaticamente anche i prossimi movimenti di «{merchant}»", { merchant: item.merchant })} hint={t("Vale per i tag che aggiungi da ora.")} />
           )}
         </Section>
 
-        {t.amount < 0 && (
+        {item.amount < 0 && (
           <>
             <Separator />
-            <Section title="Ammortamento">
-              <p className="text-sm text-muted-foreground">Una spesa grande può pesare 1/N al mese sul budget invece che tutta nel mese in cui l'hai fatta.</p>
+            <Section title={t("Ammortamento")}>
+              <p className="text-sm text-muted-foreground">{t("Una spesa grande può pesare 1/N al mese sul budget invece che tutta nel mese in cui l'hai fatta.")}</p>
               <div className="flex gap-2">
                 <Select value={String(months)} onValueChange={(v) => setMonths(Number(v))}>
-                  <SelectTrigger className="flex-1" aria-label="Mesi di ammortamento">
+                  <SelectTrigger className="flex-1" aria-label={t("Mesi di ammortamento")}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0">Nessuno</SelectItem>
+                    <SelectItem value="0">{t("Nessuno")}</SelectItem>
                     {[3, 6, 12, 24, 36].map((m) => (
                       <SelectItem key={m} value={String(m)}>
-                        {m} mesi ({euro(-t.amount / m)} al mese)
+                        {t("{n} mesi ({amount} al mese)", { n: m, amount: euro(-item.amount / m) })}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" disabled={months === (t.amortized_months ?? 0) || busy !== null} onClick={applyAmortize}>
+                <Button variant="outline" disabled={months === (item.amortized_months ?? 0) || busy !== null} onClick={applyAmortize}>
                   {busy === "amort" && <Loader2 className="animate-spin" />}
-                  Applica
+                  {t("Applica")}
                 </Button>
               </div>
             </Section>

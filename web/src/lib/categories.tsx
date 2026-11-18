@@ -2,6 +2,7 @@
 // The class strings are spelled out in full so Tailwind sees them.
 import type { CategoryKind, CategoryView } from "./types";
 import { cn } from "./utils";
+import { t } from "./i18n";
 
 export const COLORS = ["slate", "red", "orange", "amber", "lime", "green", "teal", "sky", "blue", "indigo", "violet", "pink"] as const;
 export type CategoryColor = (typeof COLORS)[number];
@@ -38,32 +39,32 @@ export const SWATCH: Record<CategoryColor, string> = {
 };
 
 export const COLOR_LABEL: Record<CategoryColor, string> = {
-  slate: "Grigio",
-  red: "Rosso",
-  orange: "Arancione",
-  amber: "Ambra",
-  lime: "Lime",
-  green: "Verde",
-  teal: "Verde acqua",
-  sky: "Celeste",
-  blue: "Blu",
-  indigo: "Indaco",
-  violet: "Viola",
-  pink: "Rosa",
+  slate: t("Grigio"),
+  red: t("Rosso"),
+  orange: t("Arancione"),
+  amber: t("Ambra"),
+  lime: t("Lime"),
+  green: t("Verde"),
+  teal: t("Verde acqua"),
+  sky: t("Celeste"),
+  blue: t("Blu"),
+  indigo: t("Indaco"),
+  violet: t("Viola"),
+  pink: t("Rosa"),
 };
 
 export const KIND_LABEL: Record<CategoryKind, string> = {
-  expense: "Spese",
-  income: "Entrate",
-  transfer: "Giroconti",
-  saving: "Risparmio",
+  expense: t("Spese"),
+  income: t("Entrate"),
+  transfer: t("Giroconti"),
+  saving: t("Risparmio"),
 };
 
 export const KIND_HINT: Record<CategoryKind, string> = {
-  expense: "Contano nel budget e nel «disponibile».",
-  income: "Stipendio, rimborsi e altre entrate.",
-  transfer: "Movimenti tra i tuoi conti: esclusi da entrate e uscite.",
-  saving: "Soldi messi da parte o investiti: non sono spese.",
+  expense: t("Contano nel budget e nel «disponibile»."),
+  income: t("Stipendio, rimborsi e altre entrate."),
+  transfer: t("Movimenti tra i tuoi conti: esclusi da entrate e uscite."),
+  saving: t("Soldi messi da parte o investiti: non sono spese."),
 };
 
 export const KINDS: CategoryKind[] = ["expense", "income", "transfer", "saving"];

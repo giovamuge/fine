@@ -19,6 +19,7 @@ import { useToast } from "@/lib/toast";
 import type { AccountView } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 import { cn } from "@/lib/utils";
+import { t, tn } from "@/lib/i18n";
 
 export function Conti() {
   const { version, refresh, sync, runSync, clearSyncResult } = useApp();
@@ -35,7 +36,7 @@ export function Conti() {
     setBusy(true);
     try {
       await api.renameAccount(rename.uid, label.trim() || null);
-      toast.success(label.trim() ? `Conto rinominato in «${label.trim()}».` : "Nome automatico ripristinato.");
+      toast.success(label.trim() ? t("Conto rinominato in «{name}».", { name: label.trim() }) : t("Nome automatico ripristinato."));
       setRename(null);
       refresh();
     } catch (e) {
@@ -50,7 +51,11 @@ export function Conti() {
     setBusy(true);
     try {
       const r = await api.removeAccount(remove.uid);
-      toast.success(`Conto rimosso: ${integer(r.transactions_deleted)} movimenti cancellati${r.consent_revoked ? ", consenso revocato presso la banca" : ""}.`);
+      toast.success(
+        r.consent_revoked
+          ? t("Conto rimosso: {n} movimenti cancellati, consenso revocato presso la banca.", { n: integer(r.transactions_deleted) })
+          : t("Conto rimosso: {n} movimenti cancellati.", { n: integer(r.transactions_deleted) }),
+      );
       setRemove(null);
       refresh();
     } catch (e) {
@@ -63,16 +68,16 @@ export function Conti() {
   return (
     <>
       <PageHeader
-        title="Conti"
-        description="Banche collegate tramite Enable Banking (PSD2, sola lettura)"
+        title={t("Conti")}
+        description={t("Banche collegate tramite Enable Banking (PSD2, sola lettura)")}
         actions={
           <>
             <Button variant="outline" onClick={runSync} disabled={sync.running || !accounts.data?.length}>
               <RefreshCw className={cn(sync.running && "animate-spin")} />
-              {sync.running ? "Sincronizzo…" : "Sincronizza ora"}
+              {sync.running ? t("Sincronizzo…") : t("Sincronizza ora")}
             </Button>
             <Button onClick={() => setConnect({})}>
-              <Plus /> Collega una banca
+              <Plus /> {t("Collega una banca")}
             </Button>
           </>
         }
@@ -98,14 +103,14 @@ export function Conti() {
           ) : (
             <Empty
               icon={<Landmark />}
-              title="Nessun conto collegato."
+              title={t("Nessun conto collegato.")}
               action={
                 <Button onClick={() => setConnect({})}>
-                  <Plus /> Collega una banca
+                  <Plus /> {t("Collega una banca")}
                 </Button>
               }
             >
-              Scegli la banca, autorizzi sulla sua pagina e incolli l'indirizzo finale. Serve un'applicazione Enable Banking configurata (vedi README).
+              {t("Scegli la banca, autorizzi sulla sua pagina e incolli l'indirizzo finale. Serve un'applicazione Enable Banking configurata (vedi README).")}
             </Empty>
           )
         }
@@ -116,30 +121,30 @@ export function Conti() {
       <ResponsiveDialog
         open={rename !== null}
         onClose={() => setRename(null)}
-        title="Rinomina conto"
-        description={`Lascia vuoto per tornare al nome automatico (${rename?.label ?? ""}).`}
+        title={t("Rinomina conto")}
+        description={t("Lascia vuoto per tornare al nome automatico ({name}).", { name: rename?.label ?? "" })}
         footer={
           <>
             <Button variant="outline" onClick={() => setRename(null)} disabled={busy}>
-              Annulla
+              {t("Annulla")}
             </Button>
             <Button onClick={doRename} disabled={busy}>
-              Salva
+              {t("Salva")}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-1.5 pb-2">
-          <Label htmlFor="rename-label">Nome</Label>
+          <Label htmlFor="rename-label">{t("Nome")}</Label>
           <Input id="rename-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={rename?.label ?? ""} maxLength={60} onKeyDown={(e) => e.key === "Enter" && doRename()} />
         </div>
       </ResponsiveDialog>
 
-      <ConfirmDialog open={remove !== null} onClose={() => setRemove(null)} onConfirm={doRemove} title={`Rimuovere «${remove?.label ?? ""}»?`} confirmLabel="Rimuovi definitivamente" danger busy={busy}>
+      <ConfirmDialog open={remove !== null} onClose={() => setRemove(null)} onConfirm={doRemove} title={t("Rimuovere «{name}»?", { name: remove?.label ?? "" })} confirmLabel={t("Rimuovi definitivamente")} danger busy={busy}>
         <p>
-          Verranno cancellati da questo computer il conto e i suoi <strong>{plural(remove?.transactions ?? 0, "movimento", "movimenti")}</strong>, con tag e ammortamenti. Il consenso viene revocato presso la banca se non serve ad altri conti.
+          {t("Verranno cancellati da questo computer il conto e i suoi")} <strong>{plural(remove?.transactions ?? 0, "movimento", "movimenti")}</strong>{t(", con tag e ammortamenti. Il consenso viene revocato presso la banca se non serve ad altri conti.")}
         </p>
-        <p className="font-medium text-destructive">Non si può annullare. Lo storico si recupera solo per quanto la banca concede ricollegando il conto.</p>
+        <p className="font-medium text-destructive">{t("Non si può annullare. Lo storico si recupera solo per quanto la banca concede ricollegando il conto.")}</p>
       </ConfirmDialog>
 
       <SyncResultDialog state={sync} onClose={clearSyncResult} />
@@ -158,26 +163,26 @@ function AccountCard({ a, onRenew, onRename, onRemove }: { a: AccountView; onRen
       <CardHeader>
         <CardTitle className="truncate">{a.custom_label ?? a.label}</CardTitle>
         <CardDescription className="truncate">
-          {[a.bank, a.country].filter(Boolean).join(" · ") || "Banca"}
+          {[a.bank, a.country].filter(Boolean).join(" · ") || t("Banca")}
           {a.custom_label && a.custom_label !== a.label ? ` · ${a.label}` : ""}
         </CardDescription>
         <CardAction>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`Azioni per ${a.label}`}>
+              <Button variant="ghost" size="icon-sm" aria-label={t("Azioni per {name}", { name: a.label })}>
                 <MoreHorizontal />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={onRenew}>
-                <RefreshCw /> Rinnova consenso
+                <RefreshCw /> {t("Rinnova consenso")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={onRename}>
-                <Pencil /> Rinomina
+                <Pencil /> {t("Rinomina")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={onRemove}>
-                <Trash2 /> Rimuovi
+                <Trash2 /> {t("Rimuovi")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -186,49 +191,49 @@ function AccountCard({ a, onRenew, onRename, onRemove }: { a: AccountView; onRen
       <CardContent className="flex flex-col gap-4">
         <div>
           <div className="tabular text-3xl font-semibold tracking-tight">{a.balance === null ? "—" : money(a.balance, a.balance_currency ?? a.currency)}</div>
-          {a.balance_at && <div className="text-xs text-muted-foreground">al {fmtDateTime(a.balance_at)}</div>}
+          {a.balance_at && <div className="text-xs text-muted-foreground">{t("al {date}", { date: fmtDateTime(a.balance_at) })}</div>}
           {a.iban && <div className="mt-1 font-mono text-xs tracking-wide text-muted-foreground">{a.iban}</div>}
         </div>
         <div className="flex flex-wrap gap-1.5">
           {a.last_sync_at === null ? (
             <Badge variant="outline" className="border-warning/40 text-warning">
-              <Clock /> Mai sincronizzato
+              <Clock /> {t("Mai sincronizzato")}
             </Badge>
           ) : failed ? (
             <Badge variant="destructive">
-              <AlertTriangle /> Sincronizzazione fallita {relativeTime(a.last_sync_at)}
+              <AlertTriangle /> {t("Sincronizzazione fallita {when}", { when: relativeTime(a.last_sync_at) })}
             </Badge>
           ) : (
             <Badge variant="outline" className="border-positive/30 text-positive">
-              <CheckCircle2 /> Sincronizzato {relativeTime(a.last_sync_at)}
+              <CheckCircle2 /> {t("Sincronizzato {when}", { when: relativeTime(a.last_sync_at) })}
             </Badge>
           )}
           {days === null ? (
-            <Badge variant="outline">Consenso: —</Badge>
+            <Badge variant="outline">{t("Consenso: —")}</Badge>
           ) : consentBad ? (
             <Badge variant="destructive">
-              <AlertTriangle /> Consenso scaduto il {fmtDate(a.consent_valid_until ?? "")}
+              <AlertTriangle /> {t("Consenso scaduto il {date}", { date: fmtDate(a.consent_valid_until ?? "") })}
             </Badge>
           ) : consentWarn ? (
             <Badge variant="outline" className="border-warning/40 text-warning">
-              <AlertTriangle /> Consenso scade {days === 0 ? "oggi" : `tra ${integer(days)} ${days === 1 ? "giorno" : "giorni"}`}
+              <AlertTriangle /> {days === 0 ? t("Consenso scade oggi") : tn(days, "Consenso scade tra {n} giorno", "Consenso scade tra {n} giorni", { n: integer(days) })}
             </Badge>
           ) : (
-            <Badge variant="outline">Consenso fino al {fmtDate(a.consent_valid_until ?? "")}</Badge>
+            <Badge variant="outline">{t("Consenso fino al {date}", { date: fmtDate(a.consent_valid_until ?? "") })}</Badge>
           )}
           <Badge variant="secondary">{plural(a.transactions, "movimento", "movimenti")}</Badge>
         </div>
         {failed && a.last_sync_error && (
           <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive" role="alert">
-            <strong>Errore:</strong> {a.last_sync_error}
+            <strong>{t("Errore:")}</strong> {a.last_sync_error}
           </p>
         )}
-        {(consentBad || consentWarn) && !failed && <p className="text-sm text-warning">Rinnova il consenso per continuare a ricevere i movimenti: lo storico resta, senza duplicati.</p>}
+        {(consentBad || consentWarn) && !failed && <p className="text-sm text-warning">{t("Rinnova il consenso per continuare a ricevere i movimenti: lo storico resta, senza duplicati.")}</p>}
       </CardContent>
       {urgent && (
         <CardFooter>
           <Button onClick={onRenew}>
-            <RefreshCw /> Rinnova consenso
+            <RefreshCw /> {t("Rinnova consenso")}
           </Button>
         </CardFooter>
       )}

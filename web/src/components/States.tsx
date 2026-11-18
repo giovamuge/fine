@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Empty as EmptyRoot, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 export function Rows({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="flex flex-col gap-3" aria-busy="true" aria-label="Caricamento">
+    <div className="flex flex-col gap-3" aria-busy="true" aria-label={t("Caricamento")}>
       {Array.from({ length: rows }, (_, i) => (
         <Skeleton key={i} className="h-4" style={{ width: `${92 - (i % 3) * 17}%` }} />
       ))}
@@ -20,12 +21,12 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   return (
     <Alert variant="destructive">
       <AlertTriangle />
-      <AlertTitle>Non riesco a caricare questi dati</AlertTitle>
+      <AlertTitle>{t("Non riesco a caricare questi dati")}</AlertTitle>
       <AlertDescription>{message}</AlertDescription>
       {onRetry && (
         <AlertAction>
           <Button size="sm" variant="outline" onClick={onRetry}>
-            <RotateCw /> Riprova
+            <RotateCw /> {t("Riprova")}
           </Button>
         </AlertAction>
       )}
@@ -71,11 +72,11 @@ export function Loaded<T>({
       {error && (
         <Alert variant="destructive" className="mb-3">
           <AlertTriangle />
-          <AlertTitle>Dati non aggiornati</AlertTitle>
+          <AlertTitle>{t("Dati non aggiornati")}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
           <AlertAction>
             <Button size="sm" variant="outline" onClick={reload}>
-              Riprova
+              {t("Riprova")}
             </Button>
           </AlertAction>
         </Alert>

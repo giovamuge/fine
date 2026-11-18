@@ -4,17 +4,18 @@ import { Hash, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { t } from "@/lib/i18n";
 
 export function TagChips({ tags, onRemove }: { tags: string[]; onRemove?: (tag: string) => void }) {
   if (!tags.length) return null;
   return (
     <span className="inline-flex flex-wrap gap-1">
-      {tags.map((t) => (
-        <Badge key={t} variant="secondary" className="gap-0.5 font-normal">
+      {tags.map((tag) => (
+        <Badge key={tag} variant="secondary" className="gap-0.5 font-normal">
           <Hash className="opacity-60" />
-          {t}
+          {tag}
           {onRemove && (
-            <button type="button" className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-foreground/10" onClick={() => onRemove(t)} aria-label={`Rimuovi tag ${t}`}>
+            <button type="button" className="-mr-1 ml-0.5 rounded-full p-0.5 hover:bg-foreground/10" onClick={() => onRemove(tag)} aria-label={t("Rimuovi tag {tag}", { tag })}>
               <X />
             </button>
           )}
@@ -56,8 +57,8 @@ export function TagAdd({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKey}
-        placeholder="Aggiungi tag… (es. vacanza-londra)"
-        aria-label="Nuovo tag"
+        placeholder={t("Aggiungi tag… (es. vacanza-londra)")}
+        aria-label={t("Nuovo tag")}
         disabled={disabled}
         autoCapitalize="none"
         autoCorrect="off"
@@ -69,7 +70,7 @@ export function TagAdd({
         ))}
       </datalist>
       <Button type="button" variant="outline" onClick={submit} disabled={disabled || !value.trim()}>
-        <Plus /> Aggiungi
+        <Plus /> {t("Aggiungi")}
       </Button>
     </div>
   );

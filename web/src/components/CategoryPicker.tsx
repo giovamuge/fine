@@ -9,13 +9,14 @@ import { api, errorMessage } from "@/lib/api";
 import { CategoryIcon, KINDS, KIND_LABEL } from "@/lib/categories";
 import { useToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 export function CategoryPicker({
   value,
   onChange,
   allowNone,
-  noneLabel = "Da categorizzare",
-  placeholder = "Scegli una categoria",
+  noneLabel = t("Da categorizzare"),
+  placeholder = t("Scegli una categoria"),
   trigger,
   className,
   disabled,
@@ -50,7 +51,7 @@ export function CategoryPicker({
     try {
       await api.createCategory(typed, "expense", "", "");
       refresh();
-      toast.success(`Categoria «${typed}» creata: personalizzala dalla sezione Categorie.`);
+      toast.success(t("Categoria «{name}» creata: personalizzala dalla sezione Categorie.", { name: typed }));
       pick(typed);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -72,9 +73,9 @@ export function CategoryPicker({
       </PopoverTrigger>
       <PopoverContent className="w-[min(320px,calc(100vw-2rem))] p-0" align="start" onClick={(e) => e.stopPropagation()}>
         <Command>
-          <CommandInput placeholder="Cerca o crea…" value={search} onValueChange={setSearch} />
+          <CommandInput placeholder={t("Cerca o crea…")} value={search} onValueChange={setSearch} />
           <CommandList className="max-h-72">
-            <CommandEmpty>Nessuna categoria.</CommandEmpty>
+            <CommandEmpty>{t("Nessuna categoria.")}</CommandEmpty>
             {allowNone && (
               <CommandGroup>
                 <CommandItem value={`__none ${noneLabel}`} onSelect={() => pick("")}>
@@ -104,7 +105,7 @@ export function CategoryPicker({
                 <CommandSeparator />
                 <CommandGroup>
                   <CommandItem value={`__create ${typed}`} onSelect={create}>
-                    <Plus /> Crea «{typed}»
+                    <Plus /> {t("Crea «{name}»", { name: typed })}
                   </CommandItem>
                 </CommandGroup>
               </>
@@ -123,7 +124,7 @@ export function CategoryLabel({ name, className }: { name: string | null; classN
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
       {c?.icon && <span aria-hidden="true">{c.icon}</span>}
-      <span className={cn("truncate", !name && "font-medium text-warning")}>{name ?? "Da categorizzare"}</span>
+      <span className={cn("truncate", !name && "font-medium text-warning")}>{name ?? t("Da categorizzare")}</span>
     </span>
   );
 }

@@ -1,6 +1,8 @@
 import type {
   AccountView,
   BalanceHistory,
+  Budget,
+  BudgetStatus,
   CategorizeOutcome,
   CategoryKind,
   CategoryPatch,
@@ -21,6 +23,7 @@ import type {
   TrendPoint,
   TxView,
 } from "./types";
+import { LANG, t } from "./i18n";
 
 export class ApiError extends Error {
   status: number;
@@ -35,10 +38,10 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, body === undefined
-      ? { headers: { Accept: "application/json" } }
-      : { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
+      ? { headers: { Accept: "application/json", "X-Fine-Lang": LANG } }
+      : { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", "X-Fine-Lang": LANG }, body: JSON.stringify(body) });
   } catch {
-    throw new ApiError("Impossibile raggiungere fine: controlla che `fine serve` sia in esecuzione.", 0);
+    throw new ApiError(t("Impossibile raggiungere fine: controlla che `fine serve` sia in esecuzione."), 0);
   }
   let json: unknown = null;
   const text = await res.text();
@@ -54,8 +57,8 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
       json && typeof json === "object" && typeof (json as { error?: unknown }).error === "string"
         ? (json as { error: string }).error
         : res.status === 401
-          ? "Autenticazione richiesta: ricarica la pagina e inserisci la password."
-          : `Errore ${res.status}`;
+          ? t("Autenticazione richiesta: ricarica la pagina e inserisci la password.")
+          : t("Errore {status}", { status: res.status });
     throw new ApiError(msg, res.status);
   }
   return json as T;
@@ -85,6 +88,11 @@ export const api = {
   summary: (month?: string) => request<MonthSummary>(`/api/summary${qs({ month })}`),
   trend: () => request<TrendPoint[]>("/api/trend"),
   recurring: () => request<Recurring[]>("/api/recurring"),
+  budgets: () => request<BudgetStatus[]>("/api/budgets"),
+  budget: (name: string) => request<BudgetStatus>(`/api/budgets${qs({ name })}`),
+  saveBudget: (budget: Budget, replaces?: string) => request<Budget>("/api/budgets", { budget, replaces }),
+  previewBudget: (budget: Budget) => request<BudgetStatus>("/api/budgets/preview", { budget }),
+  deleteBudget: (name: string) => request<null>("/api/budgets/delete", { name }),
   sinking: () => request<SinkingFund[]>("/api/sinking"),
   categories: () => request<CategoryView[]>("/api/categories"),
   createCategory: (name: string, kind: CategoryKind, icon: string, color: string) =>
