@@ -241,6 +241,6 @@ fine serve                             # API on http://127.0.0.1:7878
 cd web && npm install && npm run dev   # Vite on http://localhost:5173
 ```
 
-A `vX.Y.Z` tag publishes the release binaries; align the version in `Cargo.toml` and `.claude-plugin/plugin.json` first.
+Bumping the version in `Cargo.toml` (and `.claude-plugin/plugin.json`) is all it takes to release: on the next push to `main` the Release workflow builds the binaries and publishes them as `vX.Y.Z`, creating the tag.
 
 Inspired by [BankMCP](https://github.com/noskillish/bankmcp) (MIT). License: [MIT](LICENSE).
