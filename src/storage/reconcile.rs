@@ -8,8 +8,9 @@ use chrono::{Days, NaiveDate};
 use rusqlite::params;
 
 use super::Db;
-use crate::domain::Money;
+use super::fx::tx_base_cents_sql;
 use crate::domain::transaction::CategorizedBy;
+use crate::domain::{BASE_CURRENCY, Money};
 use crate::error::Result;
 
 /// PayPal Europe's SEPA creditor identifier, written in the remittance of its direct debits
@@ -19,39 +20,65 @@ const PAYPAL_CREDITOR_ID: &str = "lu96zzz0000000000000000058";
 /// How many days after the PayPal purchase the bank debit may be booked.
 const MAX_DAYS: u64 = 7;
 
+/// PayPal converts foreign purchases with a margin over the ECB rate (3-4.5%): the bank debit in
+/// euro may differ from the ECB value of a foreign purchase by up to this much.
+const FX_TOLERANCE_PERCENT: i64 = 5;
+
 impl Db<'_> {
-    /// Pairs unreconciled PayPal purchases with PayPal debits on the other accounts: same
-    /// currency, same amount, bank debit booked 0..=MAX_DAYS days later. A debit is PayPal's when
-    /// its text has PayPal's creditor identifier or names PayPal; debits with the identifier are
-    /// preferred, then the closest date. A bank debit the user categorized by hand is left alone.
-    /// Returns the number of new pairs.
+    /// Pairs unreconciled PayPal purchases with PayPal debits on the other accounts, booked
+    /// 0..=MAX_DAYS days later: for the same amount in the same currency, or, for a purchase in
+    /// another currency, a debit in euro within `FX_TOLERANCE_PERCENT` of its ECB value (once the
+    /// rate is known). A debit is PayPal's when its text has PayPal's creditor identifier or names
+    /// PayPal; debits with the identifier are preferred, then the closest amount, then the closest
+    /// date. A bank debit the user categorized by hand is left alone. Returns the number of new
+    /// pairs.
     pub fn reconcile_paypal(&self) -> Result<usize> {
         let Some(transfer) = self.transfer_category_id()? else {
             return Ok(0);
         };
-        let purchases: Vec<(i64, NaiveDate, Money, String)> = self.rows(
-            "SELECT t.id, t.booking_date, t.amount_cents, t.currency
+        let sql = format!(
+            "SELECT t.id, t.booking_date, t.amount_cents, t.currency, {}
              FROM transactions t JOIN accounts a ON a.uid = t.account_uid
              WHERE a.aspsp LIKE 'paypal%' AND t.amount_cents < 0 AND t.funded_by IS NULL
              ORDER BY t.booking_date, t.id",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
+            tx_base_cents_sql()
+        );
+        type Purchase = (i64, NaiveDate, Money, String, Option<Money>);
+        let purchases: Vec<Purchase> = self.rows(&sql, [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?;
         let mut paired = 0;
-        for (id, date, amount, currency) in purchases {
+        for (id, date, amount, currency, base) in purchases {
+            // What the bank debit should be: the same amount, or the euro value give or take.
+            let (target, currency, tolerance) = if currency == BASE_CURRENCY {
+                (amount, currency, Money::ZERO)
+            } else if let Some(base) = base {
+                let tolerance = base.abs() * FX_TOLERANCE_PERCENT / 100;
+                (base, BASE_CURRENCY.to_owned(), tolerance)
+            } else {
+                continue; // no exchange rate yet: tried again after the next rates update
+            };
             let debit: Option<i64> = self.row(
                 "SELECT t.id FROM transactions t JOIN accounts a ON a.uid = t.account_uid
                  WHERE a.aspsp NOT LIKE 'paypal%'
-                   AND t.amount_cents = ?1 AND t.currency = ?2
+                   AND t.currency = ?2 AND abs(t.amount_cents - ?1) <= ?6
                    AND t.booking_date BETWEEN ?3 AND ?4
                    AND (instr(lower(COALESCE(t.description, '')), ?5) > 0
                         OR lower(COALESCE(t.counterparty, '') || ' ' || COALESCE(t.description, '')
                                  || ' ' || t.merchant) LIKE '%paypal%')
                    AND COALESCE(t.categorized_by, '') <> 'manual'
                    AND NOT EXISTS (SELECT 1 FROM transactions p WHERE p.funded_by = t.id)
-                 ORDER BY instr(lower(COALESCE(t.description, '')), ?5) > 0 DESC, t.booking_date, t.id
+                 ORDER BY instr(lower(COALESCE(t.description, '')), ?5) > 0 DESC,
+                          abs(t.amount_cents - ?1), t.booking_date, t.id
                  LIMIT 1",
-                params![amount, currency, date, date + Days::new(MAX_DAYS), PAYPAL_CREDITOR_ID],
+                params![
+                    target,
+                    currency,
+                    date,
+                    date + Days::new(MAX_DAYS),
+                    PAYPAL_CREDITOR_ID,
+                    tolerance
+                ],
                 |r| r.get(0),
             )?;
             let Some(debit) = debit else { continue };
@@ -156,5 +183,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!((kind.as_str(), by.as_str()), ("transfer", "paypal"));
+    }
+
+    #[test]
+    fn pairs_foreign_purchases_with_the_euro_debit() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn()
+            .execute_batch(
+                "INSERT INTO accounts (uid, currency, aspsp) VALUES ('pp', 'XXX', 'PayPal'), ('bank', 'EUR', 'FinecoBank');
+                 INSERT INTO fx_rates VALUES ('GBP', '2026-10-01', 0.85);",
+            )
+            .unwrap();
+        let foreign = |id: i64, cents: i64| {
+            store
+                .conn()
+                .execute(
+                    "INSERT INTO transactions (id, account_uid, booking_date, amount_cents, currency, description, merchant, dedup_key)
+                     VALUES (?1, 'pp', '2026-10-01', ?2, 'GBP', 'Booking', 'booking', ?1)",
+                    params![id, cents],
+                )
+                .unwrap();
+        };
+        foreign(1, -8500); // 100.00 € at the ECB rate
+        tx(
+            &store,
+            10,
+            "bank",
+            "2026-10-03",
+            -10900,
+            "PayPal Europe Addebito SDD",
+        ); // +9%: too far
+        tx(
+            &store,
+            11,
+            "bank",
+            "2026-10-03",
+            -10350,
+            "PayPal Europe Addebito SDD",
+        ); // +3.5%
+        assert_eq!(store.db().reconcile_paypal().unwrap(), 1);
+        let funded: Option<i64> = store
+            .conn()
+            .query_row("SELECT funded_by FROM transactions WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(funded, Some(11));
+        // Without a rate a foreign purchase waits.
+        store
+            .conn()
+            .execute(
+                "INSERT INTO transactions (id, account_uid, booking_date, amount_cents, currency, merchant, dedup_key)
+                 VALUES (2, 'pp', '2026-11-01', -1000, 'JPY', 'x', 2)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.db().reconcile_paypal().unwrap(), 0);
     }
 }

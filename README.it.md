@@ -224,7 +224,7 @@ Si creano chiedendolo alla tua AI o dall'editor visuale della dashboard.
 - I dati restano in `~/.fine/` (o `FINE_DATA_DIR`) con permessi 0600. Elimina la cartella per dimenticare tutto.
 - Un'AI in cloud invia al suo fornitore le transazioni che legge. Per restare tutto in locale usa un client MCP con un modello Ollama.
 - Le descrizioni della banca sono testo non fidato: restituite come dati, mai interpretate come HTML, e all'AI viene detto di non eseguirne le istruzioni.
-- Le analisi usano solo i movimenti in **EUR**; i conti in altre valute vengono sincronizzati e sono consultabili.
+- Le analisi sono in **EUR**: movimenti e saldi in altre valute contano al cambio di riferimento della Banca Centrale Europea del loro giorno, scaricato da [Frankfurter](https://frankfurter.dev) (gratuito, senza chiave; vengono inviati solo codici valuta e date) e conservato in locale. Finché il cambio non è disponibile quei movimenti restano fuori e `status` lo segnala.
 
 ## Sviluppo
 

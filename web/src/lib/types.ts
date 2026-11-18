@@ -121,6 +121,8 @@ export interface AccountBalance {
   account: string;
   balance: number;
   currency: string;
+  /** In euro (ECB rate of `as_of`); null without a rate. */
+  balance_eur: number | null;
   as_of: string;
   in_total: boolean;
 }
@@ -188,6 +190,7 @@ export interface SyncReport {
   accounts: AccountSync[];
   auto_categorized: number;
   auto_tagged: number;
+  rates_error?: string;
 }
 
 export interface AiOutcome {
@@ -287,7 +290,11 @@ export interface Rule {
 export interface TxView {
   id: number;
   date: string;
+  /** In `currency`. */
   amount: number;
+  currency: string;
+  /** In euro (ECB rate of the day for other currencies); null without a rate. */
+  amount_eur: number | null;
   merchant: string;
   counterparty: string | null;
   description: string | null;

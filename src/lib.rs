@@ -3,7 +3,7 @@
 //! Layers, from the inside out:
 //! - [`domain`]: types and rules of personal finance, pure and deterministic;
 //! - [`storage`]: SQLite, the only place with SQL;
-//! - [`bank`]: the Enable Banking client;
+//! - [`bank`], [`rates`]: clients of the outside services (Enable Banking, ECB exchange rates);
 //! - [`services`]: the use cases, shared by every interface;
 //! - [`mcp`], [`web`] (and the CLI in the binary): thin adapters for AI clients, the dashboard
 //!   and the terminal.
@@ -15,6 +15,7 @@ pub mod domain;
 pub mod error;
 pub mod i18n;
 pub mod mcp;
+pub mod rates;
 pub mod services;
 pub mod storage;
 pub mod web;

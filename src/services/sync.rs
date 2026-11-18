@@ -16,6 +16,8 @@ use crate::domain::Money;
 use crate::domain::text;
 use crate::domain::transaction::CategorizedBy;
 use crate::error::{Error, Result};
+use crate::rates::Client as RatesClient;
+use crate::services::rates;
 use crate::storage::{Db, NewTransaction, Store};
 use crate::tr;
 
@@ -43,6 +45,9 @@ pub struct SyncReport {
     pub accounts: Vec<AccountSync>,
     pub auto_categorized: usize,
     pub auto_tagged: usize,
+    /// The exchange rates foreign transactions need could not be updated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rates_error: Option<String>,
 }
 
 impl SyncReport {
@@ -95,6 +100,11 @@ pub async fn sync_all(store: &mut Store, client: &Client) -> Result<SyncReport> 
             error,
         });
     }
+    // Foreign transactions are counted once their exchange rate is known (no PSD2 cost).
+    let rates_error = rates::update(store, &RatesClient::default())
+        .await
+        .err()
+        .map(|e| e.chain());
     let (auto_categorized, auto_tagged) = store.write(|db| {
         db.reconcile_paypal()?;
         Ok((db.apply_category_rules()?, db.apply_tag_rules_to_new()?))
@@ -103,6 +113,7 @@ pub async fn sync_all(store: &mut Store, client: &Client) -> Result<SyncReport> 
         accounts,
         auto_categorized,
         auto_tagged,
+        rates_error,
     })
 }
 
@@ -219,33 +230,47 @@ pub fn is_stale(store: &Store) -> Result<bool> {
     Ok(db.successful_syncs_since(Utc::now() - Duration::hours(STALE_HOURS))? == 0)
 }
 
-/// Sync only if data is stale and Enable Banking is configured. Never fails the caller:
-/// returns a short message describing what happened (or why it could not sync).
+/// Sync only if data is stale and Enable Banking is configured; otherwise just fill in the
+/// exchange rates foreign transactions are missing. Never fails the caller: returns a short
+/// message describing what happened (or why it could not), `None` when there was nothing to do.
 pub async fn sync_if_stale(store: &mut Store, eb: Option<&EnableBankingConfig>) -> Option<String> {
-    let eb = eb?;
-    match is_stale(store) {
-        Ok(true) => {}
-        Ok(false) => return None,
-        Err(e) => return Some(format!("controllo sincronizzazione fallito: {}", e.chain())),
+    if let Some(eb) = eb {
+        match is_stale(store) {
+            Ok(true) => return Some(sync_now(store, eb).await),
+            Ok(false) => {}
+            Err(e) => return Some(format!("controllo sincronizzazione fallito: {}", e.chain())),
+        }
     }
+    match rates::update(store, &RatesClient::default()).await {
+        Ok(0) => None,
+        Ok(n) => Some(format!("cambi aggiornati: {n}")),
+        Err(e) => Some(format!("cambi non aggiornati: {}", e.chain())),
+    }
+}
+
+async fn sync_now(store: &mut Store, eb: &EnableBankingConfig) -> String {
     let run = async {
         let client = Client::new(eb).map_err(Error::from)?;
         sync_all(store, &client).await
     };
-    Some(match run.await {
+    match run.await {
         Ok(r) => {
             let (new, errors) = (r.inserted(), r.errors());
-            if errors.is_empty() {
+            let mut msg = if errors.is_empty() {
                 format!("sincronizzato: {new} nuove transazioni")
             } else {
                 format!(
                     "sincronizzazione parziale ({new} nuove); errori: {}",
                     errors.join("; ")
                 )
+            };
+            if let Some(e) = r.rates_error {
+                msg.push_str(&format!("; cambi non aggiornati: {e}"));
             }
+            msg
         }
         Err(e) => format!("sincronizzazione non riuscita: {}", e.chain()),
-    })
+    }
 }
 
 #[cfg(test)]

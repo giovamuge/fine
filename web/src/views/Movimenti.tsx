@@ -18,7 +18,7 @@ import { TxDetail } from "@/components/TxDetail";
 import { api, errorMessage } from "@/lib/api";
 import { useApp } from "@/lib/app-state";
 import { CategoryIcon } from "@/lib/categories";
-import { euro, fmtDay, integer, iso, plural, signed } from "@/lib/format";
+import { amountIn, fmtDay, inEuro, integer, iso, plural, signed } from "@/lib/format";
 import { Link, href, navigate, useRoute } from "@/lib/router";
 import { useToast } from "@/lib/toast";
 import type { TxView } from "@/lib/types";
@@ -161,8 +161,8 @@ export function Movimenti() {
       const last = out[out.length - 1];
       if (last && last.date === tx.date) {
         last.items.push(tx);
-        last.total += tx.amount;
-      } else out.push({ date: tx.date, items: [tx], total: tx.amount });
+        last.total += tx.amount_eur ?? 0;
+      } else out.push({ date: tx.date, items: [tx], total: tx.amount_eur ?? 0 });
     }
     return out;
   }, [txs.data]);
@@ -389,7 +389,10 @@ function TxRow({
           </span>
           {tx.description && tx.description !== tx.merchant && <span className="line-clamp-1 text-xs text-muted-foreground/80">{tx.description}</span>}
         </span>
-        <span className={cn("tabular shrink-0 text-sm font-medium", tx.amount > 0 && "text-positive")}>{tx.amount > 0 ? `+${euro(tx.amount)}` : euro(tx.amount)}</span>
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          <span className={cn("tabular text-sm font-medium", tx.amount > 0 && "text-positive")}>{amountIn(tx.amount, tx.currency)}</span>
+          {inEuro(tx.currency, tx.amount_eur) && <span className="tabular text-xs text-muted-foreground">{inEuro(tx.currency, tx.amount_eur)}</span>}
+        </span>
       </button>
     </li>
   );

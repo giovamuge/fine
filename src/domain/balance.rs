@@ -8,26 +8,33 @@ use serde::Serialize;
 
 use super::money::Money;
 
-/// An account's last balance from the bank, with its daily net movements (base currency only).
+/// An account's last balance from the bank, with its daily net movements.
 #[derive(Debug)]
 pub struct AccountLedger {
     pub label: String,
+    /// In `currency`.
     pub balance: Money,
+    /// In the base currency; `None` when there is no exchange rate.
+    pub balance_base: Option<Money>,
     pub currency: String,
     /// When the bank reported the balance (RFC 3339).
     pub as_of: String,
-    /// `Some` for accounts in the base currency: they are summed in the total.
+    /// Net movements per day in the base currency, for accounts with `balance_base`: they are
+    /// summed in the total.
     pub daily: Option<BTreeMap<NaiveDate, Money>>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct AccountBalance {
     pub account: String,
+    /// In `currency`.
     pub balance: Money,
     pub currency: String,
+    /// The balance in euro (foreign ones at the ECB rate of `as_of`); None without a rate.
+    pub balance_eur: Option<Money>,
     /// When the bank reported this balance.
     pub as_of: String,
-    /// Counted in `current` / `points` (only base-currency accounts are summed).
+    /// Counted in `current` / `points` (accounts that can be valued in euro).
     pub in_total: bool,
 }
 
@@ -61,19 +68,20 @@ pub fn history(ledgers: Vec<AccountLedger>, today: NaiveDate, days: u64) -> Bala
     let mut series: Vec<(Money, NaiveDate, BTreeMap<NaiveDate, Money>)> = vec![];
     let mut accounts = Vec::with_capacity(ledgers.len());
     for l in ledgers {
-        let in_total = l.daily.is_some();
-        if let Some(daily) = l.daily {
+        let in_total = l.balance_base.is_some() && l.daily.is_some();
+        if let (Some(balance), Some(daily)) = (l.balance_base, l.daily) {
             let as_of = l
                 .as_of
                 .get(..10)
                 .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
                 .unwrap_or_default();
-            series.push((l.balance, as_of, daily));
+            series.push((balance, as_of, daily));
         }
         accounts.push(AccountBalance {
             account: l.label,
             balance: l.balance,
             currency: l.currency,
+            balance_eur: l.balance_base,
             as_of: l.as_of,
             in_total,
         });
@@ -154,6 +162,7 @@ mod tests {
             AccountLedger {
                 label: "a".into(),
                 balance: Money::from_cents(100000),
+                balance_base: Some(Money::from_cents(100000)),
                 currency: "EUR".into(),
                 as_of: "2026-03-10T08:00:00+00:00".into(),
                 daily: Some(daily),
@@ -161,6 +170,7 @@ mod tests {
             AccountLedger {
                 label: "b".into(),
                 balance: Money::from_cents(5000),
+                balance_base: None,
                 currency: "USD".into(),
                 as_of: "2026-03-10T08:00:00+00:00".into(),
                 daily: None,

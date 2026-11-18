@@ -7,10 +7,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::Db;
+use super::fx::tx_base_cents_sql;
 use crate::domain::calendar::parse_date;
 use crate::domain::category::CategoryKind;
 use crate::domain::transaction::{CategorizedBy, Tx, amortization_horizon};
-use crate::domain::{BASE_CURRENCY, Money, tag};
+use crate::domain::{Money, tag};
 use crate::error::{Error, Result};
 use crate::tr;
 
@@ -55,7 +56,11 @@ pub struct SearchParams {
 pub struct TxView {
     pub id: i64,
     pub date: String,
+    /// In `currency` (negative = money out).
     pub amount: Money,
+    pub currency: String,
+    /// `amount` in euro (at the ECB rate of the day for other currencies); None without a rate.
+    pub amount_eur: Option<Money>,
     pub merchant: String,
     pub counterparty: Option<String>,
     pub description: Option<String>,
@@ -139,7 +144,12 @@ impl Db<'_> {
                     (SELECT COALESCE(fa.label, fa.aspsp, fa.name, fa.uid) || char(31) || strftime('%d/%m/%Y', f.booking_date)
                      FROM transactions f JOIN accounts fa ON fa.uid = f.account_uid WHERE f.id = t.funded_by),
                     (SELECT p.merchant || char(31) || strftime('%d/%m/%Y', p.booking_date)
-                     FROM transactions p WHERE p.funded_by = t.id)
+                     FROM transactions p WHERE p.funded_by = t.id),
+                    t.currency, ",
+        );
+        sql.push_str(&tx_base_cents_sql());
+        sql.push_str(
+            "
              FROM transactions t
              LEFT JOIN categories c ON c.id = t.category_id
              LEFT JOIN amortizations a ON a.transaction_id = t.id
@@ -185,6 +195,8 @@ impl Db<'_> {
                 id: r.get(0)?,
                 date: r.get(1)?,
                 amount: r.get(2)?,
+                currency: r.get(13)?,
+                amount_eur: r.get(14)?,
                 merchant: r.get(3)?,
                 counterparty: r.get(4)?,
                 description: r.get(5)?,
@@ -333,44 +345,46 @@ impl Db<'_> {
         Ok(())
     }
 
-    /// Base-currency transactions booked in [from, to], plus earlier amortized ones whose
-    /// monthly slices may land there (see `Tx::relevant_for`). Oldest first.
+    /// Transactions booked in [from, to], plus earlier amortized ones whose monthly slices may
+    /// land there (see `Tx::relevant_for`), with amounts in the base currency. Foreign ones
+    /// without an exchange rate are left out (see `unconverted_count`). Oldest first.
     pub fn load_txs(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<Tx>> {
         let amortized_from = amortization_horizon(from);
-        self.rows(
-            "SELECT t.id, t.booking_date, t.amount_cents, t.category_id, c.name, c.kind, t.merchant,
-                    t.counterparty, t.description, a.months,
-                    lower(COALESCE(ac.label, '') || ' ' || COALESCE(ac.name, '') || ' ' || COALESCE(ac.aspsp, '')
-                          || ' ' || replace(COALESCE(ac.iban, ''), ' ', '')),
-                    (SELECT group_concat(g.name, ',') FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
-                     WHERE tt.transaction_id = t.id)
-             FROM transactions t
-             LEFT JOIN categories c ON c.id = t.category_id
-             LEFT JOIN amortizations a ON a.transaction_id = t.id
-             LEFT JOIN accounts ac ON ac.uid = t.account_uid
-             WHERE t.currency = ?4
-               AND ((t.booking_date BETWEEN ?1 AND ?2)
-                OR (a.months IS NOT NULL AND t.booking_date BETWEEN ?3 AND ?2))
-             ORDER BY t.booking_date, t.id",
-            params![from, to, amortized_from, BASE_CURRENCY],
-            |r| {
-                let amount: Money = r.get(2)?;
-                let kind: Option<CategoryKind> = r.get(5)?;
-                Ok(Tx {
-                    id: r.get(0)?,
-                    date: r.get(1)?,
-                    amount,
-                    category_id: r.get(3)?,
-                    category: r.get(4)?,
-                    kind: kind.unwrap_or_else(|| Tx::uncategorized_kind(amount)),
-                    merchant: r.get(6)?,
-                    counterparty: r.get(7)?,
-                    description: r.get(8)?,
-                    amortized_months: r.get(9)?,
-                    account: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
-                    tags: split_list(r.get(11)?),
-                })
-            },
-        )
+        let sql = format!(
+            "SELECT * FROM (
+                SELECT t.id, t.booking_date, {base} AS base_cents, t.category_id, c.name, c.kind, t.merchant,
+                       t.counterparty, t.description, a.months,
+                       lower(COALESCE(ac.label, '') || ' ' || COALESCE(ac.name, '') || ' ' || COALESCE(ac.aspsp, '')
+                             || ' ' || replace(COALESCE(ac.iban, ''), ' ', '')),
+                       (SELECT group_concat(g.name, ',') FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
+                        WHERE tt.transaction_id = t.id)
+                FROM transactions t
+                LEFT JOIN categories c ON c.id = t.category_id
+                LEFT JOIN amortizations a ON a.transaction_id = t.id
+                LEFT JOIN accounts ac ON ac.uid = t.account_uid
+                WHERE (t.booking_date BETWEEN ?1 AND ?2)
+                   OR (a.months IS NOT NULL AND t.booking_date BETWEEN ?3 AND ?2)
+                ORDER BY t.booking_date, t.id)
+             WHERE base_cents IS NOT NULL",
+            base = tx_base_cents_sql()
+        );
+        self.rows(&sql, params![from, to, amortized_from], |r| {
+            let amount: Money = r.get(2)?;
+            let kind: Option<CategoryKind> = r.get(5)?;
+            Ok(Tx {
+                id: r.get(0)?,
+                date: r.get(1)?,
+                amount,
+                category_id: r.get(3)?,
+                category: r.get(4)?,
+                kind: kind.unwrap_or_else(|| Tx::uncategorized_kind(amount)),
+                merchant: r.get(6)?,
+                counterparty: r.get(7)?,
+                description: r.get(8)?,
+                amortized_months: r.get(9)?,
+                account: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
+                tags: split_list(r.get(11)?),
+            })
+        })
     }
 }

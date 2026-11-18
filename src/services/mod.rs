@@ -7,6 +7,7 @@ pub mod categories;
 pub mod connect;
 pub mod notify;
 pub mod planning;
+pub mod rates;
 pub mod reports;
 pub mod sync;
 pub mod tags;

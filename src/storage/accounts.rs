@@ -6,10 +6,11 @@ use chrono::{NaiveDate, Utc};
 use rusqlite::params;
 use serde::Serialize;
 
+use super::fx::{base_cents_sql, tx_base_cents_sql};
 use super::{ACCOUNT_LABEL, ACCOUNT_MATCH_TEXT, Db};
+use crate::domain::Money;
 use crate::domain::assistant::AccountHealth;
 use crate::domain::balance::AccountLedger;
-use crate::domain::{BASE_CURRENCY, Money};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Serialize)]
@@ -227,41 +228,58 @@ impl Db<'_> {
         Ok(())
     }
 
-    /// Sum of the latest balances in the base currency.
+    /// Sum of the latest balances, in the base currency (foreign ones at the rate of the day
+    /// the bank reported them; without a rate they are left out).
     pub fn base_balance_total(&self) -> Result<Option<Money>> {
-        self.value(
-            "SELECT SUM(balance_cents) FROM accounts WHERE COALESCE(balance_currency, currency) = ?1",
-            [BASE_CURRENCY],
-        )
+        let sql = format!(
+            "SELECT SUM({}) FROM accounts a WHERE a.balance_cents IS NOT NULL",
+            balance_base_cents_sql()
+        );
+        self.value(&sql, [])
     }
 
-    /// Every account with a known balance, and the daily net movements of those in the base
-    /// currency (PayPal purchases funded by a bank debit are counted once, on the bank).
+    /// Every account with a known balance and, when it can be converted to the base currency,
+    /// its daily net movements in the base currency (PayPal purchases funded by a bank debit are
+    /// counted once, on the bank).
     pub fn account_ledgers(&self) -> Result<Vec<AccountLedger>> {
         let sql = format!(
-            "SELECT a.uid, {ACCOUNT_LABEL}, a.balance_cents, a.balance_at, COALESCE(a.balance_currency, a.currency)
-             FROM accounts a WHERE a.balance_cents IS NOT NULL ORDER BY a.created_at, a.uid"
+            "SELECT a.uid, {ACCOUNT_LABEL}, a.balance_cents, a.balance_at,
+                    COALESCE(a.balance_currency, a.currency), {}
+             FROM accounts a WHERE a.balance_cents IS NOT NULL ORDER BY a.created_at, a.uid",
+            balance_base_cents_sql()
         );
-        let rows: Vec<(String, String, Money, String, String)> = self.rows(&sql, [], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        type Row = (String, String, Money, String, String, Option<Money>);
+        let rows: Vec<Row> = self.rows(&sql, [], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?;
+        let daily_sql = format!(
+            "SELECT booking_date, SUM(base) FROM (
+                 SELECT t.booking_date, {} AS base FROM transactions t
+                 WHERE t.account_uid = ?1 AND t.funded_by IS NULL)
+             WHERE base IS NOT NULL GROUP BY booking_date",
+            tx_base_cents_sql()
+        );
         rows.into_iter()
-            .map(|(uid, label, balance, as_of, currency)| {
-                let daily = if currency == BASE_CURRENCY {
-                    let days: Vec<(NaiveDate, Money)> = self.rows(
-                        "SELECT booking_date, SUM(amount_cents) FROM transactions
-                         WHERE account_uid = ?1 AND currency = ?2 AND funded_by IS NULL
-                         GROUP BY booking_date",
-                        params![uid, currency],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )?;
-                    Some(days.into_iter().collect::<BTreeMap<_, _>>())
-                } else {
-                    None
+            .map(|(uid, label, balance, as_of, currency, balance_base)| {
+                let daily = match balance_base {
+                    Some(_) => {
+                        let days: Vec<(NaiveDate, Money)> =
+                            self.rows(&daily_sql, [&uid], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                        Some(days.into_iter().collect::<BTreeMap<_, _>>())
+                    }
+                    None => None,
                 };
                 Ok(AccountLedger {
                     label,
                     balance,
+                    balance_base,
                     currency,
                     as_of,
                     daily,
@@ -316,4 +334,13 @@ impl Db<'_> {
         self.exec("DELETE FROM pending_auth WHERE state = ?1", [state])?;
         Ok(())
     }
+}
+
+/// SQL expression on account alias `a`: its balance in base-currency cents, or NULL.
+fn balance_base_cents_sql() -> String {
+    base_cents_sql(
+        "a.balance_cents",
+        "COALESCE(a.balance_currency, a.currency)",
+        "substr(a.balance_at, 1, 10)",
+    )
 }

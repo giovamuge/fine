@@ -106,6 +106,7 @@ pub fn status(store: &Store, today: NaiveDate) -> Result<Status> {
         savings_goal: db.savings_goal()?,
         budgets: budget_statuses,
         uncategorized: db.uncategorized_count()?,
+        unconverted: db.unconverted_count(from, today)?,
         accounts: db.account_health()?,
         balance_total: db.base_balance_total()?,
     };
@@ -116,7 +117,7 @@ pub fn status(store: &Store, today: NaiveDate) -> Result<Status> {
 mod tests {
     use super::*;
     use crate::domain::Money;
-    use crate::domain::assistant::{IncomeSource, Level};
+    use crate::domain::assistant::{AlertKind, IncomeSource, Level};
     use crate::domain::testing::d;
     use crate::services::budgets;
     use crate::services::testing::add_tx;
@@ -272,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn foreign_currency_is_excluded_from_analyses() {
+    fn foreign_currency_counts_at_the_ecb_rate_once_known() {
         let store = Store::open_in_memory().unwrap();
         add_tx(
             &store,
@@ -281,17 +282,57 @@ mod tests {
             "esselunga",
             Some("Spesa alimentare"),
         );
-        add_tx(&store, "2026-11-03", -90000, "usd broker", None);
+        let hotel = add_tx(&store, "2026-11-04", -8500, "hotel london", Some("Viaggi"));
         store
             .conn()
             .execute(
-                "UPDATE transactions SET currency = 'USD' WHERE merchant = 'usd broker'",
+                "UPDATE transactions SET currency = 'GBP' WHERE id = ?1",
+                [hotel],
+            )
+            .unwrap();
+        let today = d("2026-11-10");
+        // Without a rate it is left out, and the status says so.
+        assert_eq!(eur(monthly_summary(&store, today).unwrap().expenses), 50.0);
+        let s = status(&store, today).unwrap();
+        assert!(s.alerts.iter().any(|a| a.kind == AlertKind::Currency));
+        // With Monday's rate (2026-11-02) it counts, converted.
+        store
+            .conn()
+            .execute(
+                "INSERT INTO fx_rates VALUES ('GBP', '2026-11-02', 0.85)",
                 [],
             )
             .unwrap();
+        let m = monthly_summary(&store, today).unwrap();
+        assert_eq!(eur(m.expenses), 150.0);
+        let s = status(&store, today).unwrap();
+        assert!(!s.alerts.iter().any(|a| a.kind == AlertKind::Currency));
+        let found = store.db().search(&Default::default()).unwrap();
+        let tx = found.iter().find(|t| t.id == hotel).unwrap();
+        assert_eq!((tx.amount.cents(), tx.currency.as_str()), (-8500, "GBP"));
+        assert_eq!(tx.amount_eur, Some(Money::from_cents(-10000)));
+    }
+
+    #[test]
+    fn foreign_accounts_join_the_total_balance() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn()
+            .execute_batch(
+                "INSERT INTO accounts (uid, currency, balance_cents, balance_at)
+                 VALUES ('e', 'EUR', 100000, '2026-11-09T08:00:00+00:00'),
+                        ('u', 'USD', 11000, '2026-11-09T08:00:00+00:00');
+                 INSERT INTO fx_rates VALUES ('USD', '2026-11-06', 1.10);",
+            )
+            .unwrap();
+        let h = balance_history(&store, d("2026-11-10"), 30).unwrap();
+        assert_eq!(h.current, Some(Money::from_cents(110000)));
+        let usd = h.accounts.iter().find(|a| a.currency == "USD").unwrap();
+        assert!(usd.in_total);
+        assert_eq!(usd.balance_eur, Some(Money::from_cents(10000)));
         assert_eq!(
-            eur(monthly_summary(&store, d("2026-11-10")).unwrap().expenses),
-            50.0
+            status(&store, d("2026-11-10")).unwrap().balance_total,
+            Some(Money::from_cents(110000))
         );
     }
 }

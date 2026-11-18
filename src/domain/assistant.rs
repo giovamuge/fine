@@ -49,13 +49,15 @@ pub enum AlertKind {
     Consent,
     Stale,
     Sync,
+    Currency,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Alert {
     pub level: Level,
     /// What the alert is about, for the dashboard to link the right page:
-    /// income, overspend, pace, budget, upcoming, recurring, anomaly, uncategorized, consent, stale, sync.
+    /// income, overspend, pace, budget, upcoming, recurring, anomaly, uncategorized, consent, stale,
+    /// sync, currency.
     pub kind: AlertKind,
     pub message: String,
 }
@@ -137,6 +139,8 @@ pub struct Inputs {
     pub recurring: Vec<Recurring>,
     pub anomalies: Vec<Anomaly>,
     pub uncategorized: i64,
+    /// Foreign-currency transactions in the analysed period without an exchange rate.
+    pub unconverted: i64,
     pub accounts: Vec<AccountHealth>,
     pub balance_total: Option<Money>,
 }
@@ -159,6 +163,7 @@ pub fn status(inputs: Inputs, today: NaiveDate, now: DateTime<Utc>) -> Status {
         recurring,
         anomalies,
         uncategorized,
+        unconverted,
         accounts,
         balance_total,
     } = inputs;
@@ -300,6 +305,16 @@ pub fn status(inputs: Inputs, today: NaiveDate, now: DateTime<Utc>) -> Status {
                     "{uncategorized} uncategorized transactions (ask the AI: \"categorize the pending transactions\")."
                 )
             },
+        ));
+    }
+    if unconverted > 0 {
+        alerts.push(Alert::new(
+            Level::Warning,
+            AlertKind::Currency,
+            tr!(
+                "{unconverted} movimenti in valuta estera senza cambio BCE: restano fuori dai conti finché i cambi non si aggiornano (serve la connessione).",
+                "{unconverted} foreign-currency transactions without an ECB rate: they are left out until the rates are updated (an internet connection is needed)."
+            ),
         ));
     }
     alerts.extend(account_alerts(accounts, today, now));

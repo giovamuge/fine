@@ -135,6 +135,15 @@ CREATE TABLE budgets_v7 (
     // v8: a PayPal purchase records the bank debit that paid for it (see reconcile.rs);
     // the existing history is reconciled right after the migration
     "ALTER TABLE transactions ADD COLUMN funded_by INTEGER REFERENCES transactions(id) ON DELETE SET NULL;",
+    // v9: ECB reference rates (units of `currency` per 1 EUR), one row per published business day
+    r#"
+CREATE TABLE fx_rates (
+    currency TEXT NOT NULL,
+    date     TEXT NOT NULL,
+    rate     REAL NOT NULL CHECK (rate > 0),
+    PRIMARY KEY (currency, date)
+) WITHOUT ROWID;
+"#,
 ];
 
 /// Data changes that go with a schema version (index = position in `MIGRATIONS`).
@@ -143,7 +152,9 @@ fn after(version: usize, db: Db<'_>) -> Result<()> {
         0 => seed(db),
         5 => add_missing_defaults(db),
         6 => convert_budgets_v7(db),
-        7 => db.reconcile_paypal().map(drop),
+        // v8 added `funded_by`; reconciliation also converts currencies, so it runs once the
+        // exchange-rate table (v9) exists.
+        8 => db.reconcile_paypal().map(drop),
         _ => Ok(()),
     }
 }

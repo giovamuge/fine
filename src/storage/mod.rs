@@ -8,6 +8,7 @@
 mod accounts;
 mod budgets;
 mod categories;
+mod fx;
 mod planned;
 mod reconcile;
 mod rules;
@@ -29,6 +30,7 @@ use crate::error::{Error, Result};
 pub use accounts::{AccountView, NewAccount};
 pub use budgets::StoredBudget;
 pub use categories::{CategoryPatch, CategoryView};
+pub use fx::{RATE_MAX_AGE_DAYS, is_rateable};
 pub use planned::NewPlanned;
 pub use rules::RuleView;
 pub use seed::{DEFAULT_CATEGORIES, DEFAULT_RULES};

@@ -21,6 +21,9 @@ pub enum Error {
     /// The AI client (Claude Code / Codex) failed or answered badly.
     #[error("{0}")]
     Ai(String),
+    /// The exchange-rate service failed or answered badly.
+    #[error("{0}")]
+    Rates(String),
     /// An HTTP call outside the bank API (e.g. push notifications).
     #[error(transparent)]
     Http(#[from] reqwest::Error),

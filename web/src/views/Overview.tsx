@@ -12,7 +12,7 @@ import { Empty, Loaded } from "@/components/States";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { api } from "@/lib/api";
 import { useApp } from "@/lib/app-state";
-import { euro, fmtMonth, integer, money, percent, relativeTime, signed } from "@/lib/format";
+import { euro, fmtMonth, inEuro, integer, money, percent, relativeTime, signed } from "@/lib/format";
 import { Link } from "@/lib/router";
 import type { AccountView, BudgetState, Status } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
@@ -109,7 +109,10 @@ export function Overview() {
                               {a.account}
                               {!a.in_total && <span> · {t("escluso dal totale")}</span>}
                             </span>
-                            <span className="tabular">{money(a.balance, a.currency)}</span>
+                            <span className="flex flex-col items-end">
+                              <span className="tabular">{money(a.balance, a.currency)}</span>
+                              {a.balance !== 0 && inEuro(a.currency, a.balance_eur) && <span className="tabular text-xs text-muted-foreground">{inEuro(a.currency, a.balance_eur)}</span>}
+                            </span>
                           </li>
                         ))}
                       </ul>

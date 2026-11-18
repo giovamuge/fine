@@ -138,6 +138,9 @@ pub async fn run() -> Result<ExitCode> {
                 }
             }
             println!("Categorizzate automaticamente: {}", report.auto_categorized);
+            if let Some(e) = &report.rates_error {
+                eprintln!("Cambi valuta non aggiornati: {e}");
+            }
             if !no_ai && !run_ai(&mut store, false).await {
                 failed = true;
             }

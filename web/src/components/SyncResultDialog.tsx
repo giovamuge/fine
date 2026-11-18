@@ -33,6 +33,7 @@ export function SyncResultDialog({ state, onClose }: { state: SyncState; onClose
             {t("Regole applicate: {cat} categorizzati, {tag} taggati.", { cat: integer(r.sync.auto_categorized), tag: integer(r.sync.auto_tagged) })}
           </p>
         )}
+        {r?.sync.rates_error && <p className="text-warning">{t("Cambi valuta non aggiornati: {error}", { error: r.sync.rates_error })}</p>}
         {r?.ai && (
           <p className="text-muted-foreground">
             {t("AI ({backend}): {done} su {seen} categorizzati", { backend: r.ai.backend, done: integer(r.ai.categorized), seen: integer(r.ai.examined) })}

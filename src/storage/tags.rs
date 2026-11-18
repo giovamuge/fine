@@ -4,8 +4,9 @@ use rusqlite::params;
 use serde::Serialize;
 
 use super::Db;
+use super::fx::tx_base_cents_sql;
 use crate::domain::rules::PatternRule;
-use crate::domain::{BASE_CURRENCY, Money, text};
+use crate::domain::{Money, text};
 use crate::error::{Error, Result};
 
 /// Setting: transactions with an id above this have not been through the tag rules yet.
@@ -111,13 +112,14 @@ impl Db<'_> {
         Ok(count)
     }
 
-    /// Every tag with its totals between `from` and `to` (inclusive; None = unbounded).
+    /// Every tag with its totals in euro between `from` and `to` (inclusive; None = unbounded).
+    /// Foreign amounts without an exchange rate are not summed.
     pub fn list_tags(&self, from: Option<&str>, to: Option<&str>) -> Result<Vec<TagView>> {
-        self.rows(
+        let sql = format!(
             "SELECT g.name,
                     COUNT(t.id),
-                    COALESCE(SUM(CASE WHEN t.amount_cents < 0 AND t.currency = ?3 THEN -t.amount_cents END), 0),
-                    COALESCE(SUM(CASE WHEN t.amount_cents > 0 AND t.currency = ?3 THEN t.amount_cents END), 0),
+                    COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -{base} END), 0),
+                    COALESCE(SUM(CASE WHEN t.amount_cents > 0 THEN {base} END), 0),
                     (SELECT group_concat(r.pattern, char(31)) FROM tag_rules r WHERE r.tag_id = g.id)
              FROM tags g
              LEFT JOIN transaction_tags tt ON tt.tag_id = g.id
@@ -125,20 +127,20 @@ impl Db<'_> {
                   AND (?1 IS NULL OR t.booking_date >= ?1) AND (?2 IS NULL OR t.booking_date <= ?2)
              GROUP BY g.id
              ORDER BY 3 DESC, g.name",
-            params![from, to, BASE_CURRENCY],
-            |r| {
-                Ok(TagView {
-                    name: r.get(0)?,
-                    transactions: r.get(1)?,
-                    spent: r.get(2)?,
-                    received: r.get(3)?,
-                    rules: r
-                        .get::<_, Option<String>>(4)?
-                        .map(|s| s.split('\u{1f}').map(str::to_owned).collect())
-                        .unwrap_or_default(),
-                })
-            },
-        )
+            base = tx_base_cents_sql()
+        );
+        self.rows(&sql, params![from, to], |r| {
+            Ok(TagView {
+                name: r.get(0)?,
+                transactions: r.get(1)?,
+                spent: r.get(2)?,
+                received: r.get(3)?,
+                rules: r
+                    .get::<_, Option<String>>(4)?
+                    .map(|s| s.split('\u{1f}').map(str::to_owned).collect())
+                    .unwrap_or_default(),
+            })
+        })
     }
 
     /// Delete a tag (by normalized name) everywhere, with its rules.
