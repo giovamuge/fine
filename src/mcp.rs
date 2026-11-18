@@ -17,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, Paths};
-use crate::{analysis, assistant, categorize, db, enablebanking, money, ops, sync, tags};
+use crate::{analysis, assistant, budgets, categorize, db, enablebanking, money, ops, sync, tags};
 
 const INSTRUCTIONS: &str = "fine: personal finance over the user's own bank data (Enable Banking, read-only) stored locally.
 Amounts are in euro; negative = money out. Start with `status` for 'how am I doing / how much can I spend'.
@@ -28,6 +28,9 @@ transactions are categorized automatically. Use `upsert_planned` for salary, ren
 Tags are free-form labels, many per transaction (a trip, a project, a person, \"rimborsabile\"...), independent of the
 category: use `tag_transactions` (find ids with `search_transactions` by date/text), `list_tags` for totals per tag,
 `search_transactions` with `tag` to drill down. `balance_history` gives the current balance and how it changed over time.
+Budgets are named and rule-based: anything from \"restaurants and bars, without #lavoro, 300/month with rollover\" to
+\"London trip 800 between two dates\" or \"save at least 200 a month\". Check a new rule with `preview_budget` (it shows
+the matching transactions), then save it with `upsert_budget`; `budget_status` gives every budget's state and definition.
 Reply to the user in their language.";
 
 #[derive(Clone)]
@@ -142,12 +145,17 @@ pub struct IdArg {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BudgetArgs {
-    pub category: String,
-    /// "week", "month" or "year"
-    pub period: String,
-    /// Limit in euro; 0 removes the budget
-    pub amount: f64,
+pub struct UpsertBudgetArgs {
+    #[serde(flatten)]
+    pub budget: budgets::Budget,
+    /// Current name of the budget when renaming it
+    pub replaces: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BudgetStatusArgs {
+    /// One budget by name: also lists the transactions that count in its current period
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -374,24 +382,46 @@ impl FineServer {
     }
 
     #[tool(
-        description = "Set a spending limit for a category per week, month or year (0 removes it)."
+        description = "Create or replace a budget by name. Budgets are fully customizable: goal (max_spend, min_save, min_income), a rule choosing which transactions count (combine category, category_kind, tag, text, account, amount, direction, weekday, day_of_month, uncategorized, fixed with all/any/not), a period (week, month with start_day, quarter, year with start_month, rolling N days, custom from/to dates), rollover, amortized or cash basis, alert thresholds, and `reserve` to set the unspent part aside from the monthly available. Examples: leisure 300/month: {name:'Svago', period:{type:'month'}, amount:300, rule:{all:[{category:['Ristoranti e bar','Svago']},{not:{tag:['lavoro']}}]}, rollover:'surplus'}; trip: {name:'Londra', period:{type:'custom', from:'2026-08-01', to:'2026-08-07'}, amount:800, rule:{tag:['vacanza-londra']}, basis:'cash', reserve:true}; Amazon: {name:'Amazon', period:{type:'month'}, amount:50, rule:{text:['amazon']}}; savings: {name:'Risparmio', goal:'min_save', period:{type:'month'}, amount:200}. Run `preview_budget` first and confirm with the user."
     )]
-    async fn set_budget(&self, Parameters(a): Parameters<BudgetArgs>) -> CallToolResult {
+    async fn upsert_budget(&self, Parameters(a): Parameters<UpsertBudgetArgs>) -> CallToolResult {
         reply(
-            money::eur_to_cents(a.amount)
-                .and_then(|cents| ops::set_budget(&self.db()?, &a.category, &a.period, cents))
+            self.db()
+                .and_then(|c| budgets::upsert(&c, a.budget, a.replaces.as_deref())),
+        )
+    }
+
+    #[tool(
+        description = "Evaluate a budget definition without saving it: same input as upsert_budget; returns the current period's total, state and the matching transactions, to check the rule."
+    )]
+    async fn preview_budget(&self, Parameters(a): Parameters<UpsertBudgetArgs>) -> CallToolResult {
+        reply(
+            self.db()
+                .and_then(|c| budgets::preview(&c, a.budget, today())),
+        )
+    }
+
+    #[tool(description = "Delete a budget by name. Ask the user first.")]
+    async fn delete_budget(&self, Parameters(a): Parameters<NameArg>) -> CallToolResult {
+        reply(
+            self.db()
+                .and_then(|c| budgets::delete(&c, &a.name))
                 .map(|_| "ok"),
         )
     }
 
     #[tool(
-        description = "Status of every category budget for the current week/month/year (spent, remaining, pace)."
+        description = "State of every budget in its current period: spent/saved so far, limit (with rollover), remaining, daily allowance, end-of-period projection, pace, thresholds, history, problems, and the full definition (to edit it with upsert_budget). With `name`, one budget plus the transactions that count."
     )]
-    async fn budget_status(&self) -> CallToolResult {
-        reply(
-            self.db()
-                .and_then(|c| analysis::budget_statuses(&c, today())),
-        )
+    async fn budget_status(&self, Parameters(a): Parameters<BudgetStatusArgs>) -> CallToolResult {
+        let run = || -> Result<serde_json::Value> {
+            let conn = self.db()?;
+            Ok(match a.name.as_deref() {
+                Some(n) => serde_json::to_value(budgets::status_of(&conn, n, today())?)?,
+                None => serde_json::to_value(budgets::statuses(&conn, today())?)?,
+            })
+        };
+        reply(run())
     }
 
     #[tool(
@@ -473,7 +503,7 @@ impl FineServer {
     )]
     async fn weekly_review(&self) -> Vec<PromptMessage> {
         user(
-            "Fai la revisione settimanale delle mie finanze con fine: chiama `status`, poi `budget_status` e `monthly_summary`. Dimmi quanto posso ancora spendere questa settimana e nel mese, dove sto sforando e 2-3 azioni concrete per risparmiare. Sii breve.",
+            "Fai la revisione settimanale delle mie finanze con fine: chiama `status`, poi `budget_status` e `monthly_summary`. Dimmi quanto posso ancora spendere questa settimana e nel mese, quali budget sono a rischio (proiezione a fine periodo), dove sto sforando e 2-3 azioni concrete per risparmiare. Sii breve.",
         )
     }
 
@@ -493,7 +523,7 @@ impl FineServer {
     )]
     async fn monthly_plan(&self) -> Vec<PromptMessage> {
         user(
-            "Aiutami a impostare il piano mensile con fine. Analizza `recurring`, `trend` e `list_planned`; proponi le entrate previste, le spese fisse, le spese annuali da accantonare, budget per le categorie principali e un obiettivo di risparmio realistico. Chiedimi conferma prima di salvare con `upsert_planned`, `set_budget` e `set_savings_goal`.",
+            "Aiutami a impostare il piano mensile con fine. Analizza `recurring`, `trend` e `list_planned`; proponi le entrate previste, le spese fisse, le spese annuali da accantonare, budget per le categorie principali e un obiettivo di risparmio realistico. Per i budget pensa anche oltre le singole categorie (gruppi di categorie, esclusioni per tag, esercenti, periodi che partono dal giorno dello stipendio, riporto) e verifica ogni regola con `preview_budget`. Chiedimi conferma prima di salvare con `upsert_planned`, `upsert_budget` e `set_savings_goal`.",
         )
     }
 }
@@ -508,7 +538,7 @@ impl ServerHandler for FineServer {
                 .enable_prompts()
                 .build(),
         )
-        .with_server_info(Implementation::new("fine", env!("CARGO_PKG_VERSION")))
+        .with_server_info(Implementation::new("fine", crate::VERSION))
         .with_instructions(INSTRUCTIONS)
     }
 }

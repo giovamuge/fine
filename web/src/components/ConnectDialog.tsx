@@ -14,6 +14,7 @@ import { useApp } from "@/lib/app-state";
 import { useToast } from "@/lib/toast";
 import type { ConnectedAccount } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { LOCALE, t } from "@/lib/i18n";
 
 export interface ConnectPreset {
   bank?: string;
@@ -23,7 +24,7 @@ export interface ConnectPreset {
 }
 
 const COUNTRIES = ["IT", "DE", "FR", "ES", "NL", "BE", "AT", "PT", "IE", "LT", "FI", "SE", "DK", "NO", "PL", "GB"];
-const NAMES = new Intl.DisplayNames(["it"], { type: "region" });
+const NAMES = new Intl.DisplayNames([LOCALE], { type: "region" });
 
 function Step({ n, step, title, children }: { n: number; step: number; title: string; children: ReactNode }) {
   const active = step === n;
@@ -92,7 +93,7 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
 
   const start = async () => {
     const b = bank.trim();
-    if (!b) return setError("Scegli una banca dall'elenco.");
+    if (!b) return setError(t("Scegli una banca dall'elenco."));
     setBusy(true);
     setError(null);
     try {
@@ -107,7 +108,7 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
 
   const finish = async () => {
     const u = finalUrl.trim();
-    if (!u) return setError("Incolla l'indirizzo completo della pagina finale.");
+    if (!u) return setError(t("Incolla l'indirizzo completo della pagina finale."));
     setBusy(true);
     setError(null);
     try {
@@ -115,7 +116,7 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
       setResult(list);
       setStep(4);
       refresh();
-      toast.success(list.some((a) => a.renewed) ? "Consenso rinnovato." : "Conto collegato.");
+      toast.success(list.some((a) => a.renewed) ? t("Consenso rinnovato.") : t("Conto collegato."));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -126,25 +127,25 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
   const footer =
     step === 1 ? (
       <Button onClick={start} disabled={busy || !bank}>
-        {busy && <Loader2 className="animate-spin" />} Avvia il collegamento
+        {busy && <Loader2 className="animate-spin" />} {t("Avvia il collegamento")}
       </Button>
     ) : step === 2 ? (
       <Button variant="outline" onClick={() => setStep(3)}>
-        Ho già autorizzato
+        {t("Ho già autorizzato")}
       </Button>
     ) : step === 3 ? (
       <>
         <Button variant="outline" onClick={() => setStep(2)} disabled={busy}>
-          Indietro
+          {t("Indietro")}
         </Button>
         <Button onClick={finish} disabled={busy}>
-          {busy && <Loader2 className="animate-spin" />} Completa
+          {busy && <Loader2 className="animate-spin" />} {t("Completa")}
         </Button>
       </>
     ) : (
       <>
         <Button variant="outline" onClick={onClose}>
-          Chiudi
+          {t("Chiudi")}
         </Button>
         <Button
           onClick={() => {
@@ -152,7 +153,7 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
             void runSync();
           }}
         >
-          <RefreshCw /> Sincronizza ora
+          <RefreshCw /> {t("Sincronizza ora")}
         </Button>
       </>
     );
@@ -161,15 +162,15 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
     <ResponsiveDialog
       open={open}
       onClose={onClose}
-      title={preset?.renew ? `Rinnova il consenso di «${preset.renew}»` : "Collega una banca"}
-      description={preset?.renew ? "Rinnovare rifà solo l'autorizzazione presso la banca: lo storico resta, senza duplicati." : "Accesso in sola lettura (PSD2), per al massimo 180 giorni."}
+      title={preset?.renew ? t("Rinnova il consenso di «{name}»", { name: preset.renew }) : t("Collega una banca")}
+      description={preset?.renew ? t("Rinnovare rifà solo l'autorizzazione presso la banca: lo storico resta, senza duplicati.") : t("Accesso in sola lettura (PSD2), per al massimo 180 giorni.")}
       footer={footer}
     >
       <ol className="flex flex-col">
-        <Step n={1} step={step} title="Scegli la banca">
+        <Step n={1} step={step} title={t("Scegli la banca")}>
           <div className="grid gap-3 sm:grid-cols-[150px_1fr]">
             <div className="flex flex-col gap-1.5">
-              <Label>Paese</Label>
+              <Label>{t("Paese")}</Label>
               <Select
                 value={country}
                 onValueChange={(v) => {
@@ -190,19 +191,19 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
               </Select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label>Banca</Label>
+              <Label>{t("Banca")}</Label>
               <Popover open={bankOpen} onOpenChange={setBankOpen}>
                 <PopoverTrigger asChild>
                   <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
-                    <span className={cn("truncate", !bank && "text-muted-foreground")}>{bank || (banks.length ? "Cerca la tua banca" : banksError ? "Elenco non disponibile" : "Caricamento…")}</span>
+                    <span className={cn("truncate", !bank && "text-muted-foreground")}>{bank || (banks.length ? t("Cerca la tua banca") : banksError ? t("Elenco non disponibile") : t("Caricamento…"))}</span>
                     <ChevronsUpDown className="opacity-50" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[min(320px,calc(100vw-2rem))] p-0" align="start">
                   <Command>
-                    <CommandInput placeholder="Es. Fineco, Revolut…" />
+                    <CommandInput placeholder={t("Es. Fineco, Revolut…")} />
                     <CommandList className="max-h-64">
-                      <CommandEmpty>Nessuna banca trovata.</CommandEmpty>
+                      <CommandEmpty>{t("Nessuna banca trovata.")}</CommandEmpty>
                       <CommandGroup>
                         {banks.map((b) => (
                           <CommandItem
@@ -224,46 +225,46 @@ export function ConnectDialog({ preset, onClose }: { preset: ConnectPreset | nul
               </Popover>
             </div>
           </div>
-          {banksError && <p className="text-destructive">Elenco banche non disponibile: {banksError}</p>}
+          {banksError && <p className="text-destructive">{t("Elenco banche non disponibile: {error}", { error: banksError })}</p>}
         </Step>
-        <Step n={2} step={step} title="Autorizza sulla pagina della banca">
-          <p className="text-muted-foreground">Si apre in una nuova scheda. Accedi alla banca e consenti la lettura dei conti.</p>
+        <Step n={2} step={step} title={t("Autorizza sulla pagina della banca")}>
+          <p className="text-muted-foreground">{t("Si apre in una nuova scheda. Accedi alla banca e consenti la lettura dei conti.")}</p>
           {pending && (
             <Button asChild className="self-start">
               <a href={pending.url} target="_blank" rel="noopener noreferrer" onClick={() => setStep(3)}>
-                <ExternalLink /> Apri la pagina di {bank}
+                <ExternalLink /> {t("Apri la pagina di {bank}", { bank })}
               </a>
             </Button>
           )}
         </Step>
-        <Step n={3} step={step} title="Incolla l'indirizzo finale">
+        <Step n={3} step={step} title={t("Incolla l'indirizzo finale")}>
           {pending && (
             <>
               <p className="text-muted-foreground">
-                Alla fine la banca ti manda su <code className="rounded bg-muted px-1 py-0.5 text-xs">{pending.redirect}</code>: la pagina può dare errore, è normale. Copia l'indirizzo completo dalla barra del browser e incollalo qui.
+                {t("Alla fine la banca ti manda su")} <code className="rounded bg-muted px-1 py-0.5 text-xs">{pending.redirect}</code>{t(": la pagina può dare errore, è normale. Copia l'indirizzo completo dalla barra del browser e incollalo qui.")}
               </p>
-              <Input type="url" autoFocus value={finalUrl} onChange={(e) => setFinalUrl(e.target.value)} placeholder="https://…?code=…&state=…" aria-label="Indirizzo finale" onKeyDown={(e) => e.key === "Enter" && finish()} />
+              <Input type="url" autoFocus value={finalUrl} onChange={(e) => setFinalUrl(e.target.value)} placeholder="https://…?code=…&state=…" aria-label={t("Indirizzo finale")} onKeyDown={(e) => e.key === "Enter" && finish()} />
               <Button asChild variant="link" size="sm" className="self-start px-0">
                 <a href={pending.url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink /> Riapri la pagina della banca
+                  <ExternalLink /> {t("Riapri la pagina della banca")}
                 </a>
               </Button>
             </>
           )}
         </Step>
-        <Step n={4} step={step} title="Fatto">
+        <Step n={4} step={step} title={t("Fatto")}>
           {result.length ? (
             <ul className="flex flex-col gap-1">
               {result.map((a, i) => (
                 <li key={i}>
-                  <strong>{a.renewed ? "Rinnovato" : "Collegato"}</strong>: {[a.name, a.iban].filter(Boolean).join(" · ")} ({a.currency})
+                  <strong>{a.renewed ? t("Rinnovato") : t("Collegato")}</strong>: {[a.name, a.iban].filter(Boolean).join(" · ")} ({a.currency})
                 </li>
               ))}
             </ul>
           ) : (
-            <p>Nessun conto restituito dalla banca.</p>
+            <p>{t("Nessun conto restituito dalla banca.")}</p>
           )}
-          <p className="text-muted-foreground">Ora scarica i movimenti con una sincronizzazione.</p>
+          <p className="text-muted-foreground">{t("Ora scarica i movimenti con una sincronizzazione.")}</p>
         </Step>
       </ol>
       {error && (

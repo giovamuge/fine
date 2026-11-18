@@ -2,6 +2,7 @@
 //! bank's page, then paste back the final address), renew a consent without duplicating
 //! the history, rename and remove accounts.
 
+use crate::tr;
 use anyhow::{Context, Result, bail};
 use chrono::{Days, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -64,19 +65,26 @@ pub async fn finish(
     eb: &EnableBankingConfig,
     redirected_to: &str,
 ) -> Result<Vec<ConnectedAccount>> {
-    let url = reqwest::Url::parse(redirected_to.trim()).context("indirizzo non valido")?;
+    let url = reqwest::Url::parse(redirected_to.trim())
+        .with_context(|| tr!("indirizzo non valido", "invalid address"))?;
     let get = |k: &str| {
         url.query_pairs()
             .find(|(key, _)| key == k)
             .map(|(_, v)| v.into_owned())
     };
     if let Some(err) = get("error") {
-        bail!(
-            "la banca ha rifiutato l'autorizzazione: {err} {}",
-            get("error_description").unwrap_or_default()
-        );
+        let detail = get("error_description").unwrap_or_default();
+        bail!(tr!(
+            "la banca ha rifiutato l'autorizzazione: {err} {detail}",
+            "the bank refused the authorization: {err} {detail}"
+        ));
     }
-    let state = get("state").context("parametro state mancante nell'indirizzo")?;
+    let state = get("state").with_context(|| {
+        tr!(
+            "parametro state mancante nell'indirizzo",
+            "the address has no state parameter"
+        )
+    })?;
     let (bank, country): (String, String) = conn
         .query_row(
             "SELECT aspsp, country FROM pending_auth WHERE state = ?1",
@@ -84,10 +92,18 @@ pub async fn finish(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?
-        .context(
-            "l'indirizzo non corrisponde a nessun collegamento in corso (o è già stato usato)",
-        )?;
-    let code = get("code").context("parametro code mancante nell'indirizzo")?;
+        .with_context(|| {
+            tr!(
+                "l'indirizzo non corrisponde a nessun collegamento in corso (o è già stato usato)",
+                "the address doesn't match any connection in progress (or it was already used)"
+            )
+        })?;
+    let code = get("code").with_context(|| {
+        tr!(
+            "parametro code mancante nell'indirizzo",
+            "the address has no code parameter"
+        )
+    })?;
     let session = Client::new(eb)?.create_session(&code).await?;
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM pending_auth WHERE state = ?1", [&state])?;

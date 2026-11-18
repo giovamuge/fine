@@ -9,6 +9,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    // Released builds get the version typed when starting the Release workflow; local builds
+    // use the one in Cargo.toml.
+    println!("cargo:rerun-if-env-changed=FINE_RELEASE_VERSION");
+    let version = std::env::var("FINE_RELEASE_VERSION")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION"));
+    println!("cargo:rustc-env=FINE_VERSION={}", version.trim());
+
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let web = root.join("web");
     let dist = web.join("dist");

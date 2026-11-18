@@ -4,10 +4,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { compact, euro, fmtMonth, fmtMonthShort, signed } from "@/lib/format";
 import type { TrendPoint } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 const config = {
-  income: { label: "Entrate", color: "var(--chart-1)" },
-  expenses: { label: "Uscite", color: "var(--chart-2)" },
+  income: { label: t("Entrate"), color: "var(--chart-1)" },
+  expenses: { label: t("Uscite"), color: "var(--chart-2)" },
 } satisfies ChartConfig;
 
 export function TrendChart({ data, showTable }: { data: TrendPoint[]; showTable?: boolean }) {
@@ -17,10 +18,10 @@ export function TrendChart({ data, showTable }: { data: TrendPoint[]; showTable?
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Mese</TableHead>
-              <TableHead className="text-right">Entrate</TableHead>
-              <TableHead className="text-right">Uscite</TableHead>
-              <TableHead className="text-right">Risparmio</TableHead>
+              <TableHead>{t("Mese")}</TableHead>
+              <TableHead className="text-right">{t("Entrate")}</TableHead>
+              <TableHead className="text-right">{t("Uscite")}</TableHead>
+              <TableHead className="text-right">{t("Risparmio")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -38,7 +39,7 @@ export function TrendChart({ data, showTable }: { data: TrendPoint[]; showTable?
     );
   }
   return (
-    <ChartContainer config={config} className="aspect-auto h-64 w-full" role="img" aria-label="Entrate e uscite degli ultimi 12 mesi">
+    <ChartContainer config={config} className="aspect-auto h-64 w-full" role="img" aria-label={t("Entrate e uscite degli ultimi 12 mesi")}>
       <BarChart data={data} margin={{ left: 4, right: 8, top: 8 }}>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="month" tickLine={false} axisLine={false} tickMargin={8} tickFormatter={(m: string) => fmtMonthShort(m)} />

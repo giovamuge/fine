@@ -8,7 +8,8 @@
 //!                 + savings goal
 //!   variable budget = income - committed
 //!   variable spent  = effective spending this month that is not a fixed planned payment
-//!   available       = variable budget - variable spent
+//!   reserved        = unspent part (this month) of budgets marked `reserve` (e.g. a trip)
+//!   available       = variable budget - variable spent - reserved
 
 use anyhow::Result;
 use chrono::{Days, NaiveDate, Utc};
@@ -16,8 +17,10 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::analysis::{self, Cadence, Kind};
+use crate::budgets::{self, Goal, Phase, State};
 use crate::db;
 use crate::money::{eur, fmt, fmt_eur};
+use crate::tr;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -30,6 +33,9 @@ pub enum Level {
 #[derive(Debug, Serialize)]
 pub struct Alert {
     pub level: Level,
+    /// What the alert is about, for the dashboard to link the right page:
+    /// income, overspend, pace, budget, upcoming, recurring, anomaly, uncategorized, consent, stale, sync.
+    pub kind: &'static str,
     pub message: String,
 }
 
@@ -49,6 +55,8 @@ pub struct Status {
     pub savings_goal: f64,
     pub variable_budget: f64,
     pub variable_spent: f64,
+    /// Set aside for budgets marked `reserve` (their unspent part falling in this month).
+    pub reserved: f64,
     /// What you can still spend this month on variable expenses.
     pub available_month: f64,
     /// Suggested daily allowance for the rest of the month.
@@ -58,7 +66,7 @@ pub struct Status {
     pub spent_this_week: f64,
     pub month_elapsed: f64,
     pub budget_used: f64,
-    pub budgets: Vec<analysis::BudgetStatus>,
+    pub budgets: Vec<budgets::BudgetStatus>,
     pub uncategorized: i64,
     pub alerts: Vec<Alert>,
 }
@@ -122,7 +130,12 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
     let entries = analysis::expense_entries(&txs, &planned, m_start, today);
     let variable_spent: i64 = entries.iter().filter(|e| !e.fixed).map(|e| e.spent).sum();
     let variable_budget = income - fixed_paid - fixed_due - sinking - goal;
-    let available = variable_budget - variable_spent;
+    let budgets = budgets::statuses(conn, today)?;
+    let reserved: i64 = budgets
+        .iter()
+        .map(|b| (b.reserved * 100.0).round() as i64)
+        .sum();
+    let available = variable_budget - variable_spent - reserved;
 
     let days_left = (m_end - today).num_days() + 1;
     let per_day = if available > 0 {
@@ -155,61 +168,45 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
     if income == 0 {
         alerts.push(Alert {
             level: Level::Info,
-            message: "Nessuna entrata nota: aggiungi lo stipendio come entrata prevista (upsert_planned) per calcolare il disponibile.".into(),
+            kind: "income",
+            message: tr!(
+                "Nessuna entrata nota: aggiungi lo stipendio come entrata prevista (upsert_planned) per calcolare il disponibile.",
+                "No known income: add your salary as expected income (upsert_planned) to work out what you can spend."
+            ),
         });
     } else if available < 0 {
         alerts.push(Alert {
             level: Level::Critical,
-            message: format!(
+            kind: "overspend",
+            message: tr!(
                 "Hai superato il budget variabile del mese di {}.",
+                "You're {} over this month's variable budget.",
                 fmt(-available)
             ),
         });
     } else if used > elapsed + 0.15 && used > 0.3 {
         alerts.push(Alert {
             level: Level::Warning,
-            message: format!(
+            kind: "pace",
+            message: tr!(
                 "Stai spendendo più velocemente del previsto: {:.0}% del budget variabile usato al {:.0}% del mese.",
+                "You're spending faster than planned: {:.0}% of the variable budget used {:.0}% into the month.",
                 used * 100.0,
                 elapsed * 100.0
             ),
         });
     }
-    let budgets = analysis::budget_statuses(conn, today)?;
-    for b in &budgets {
-        let period = match b.period.as_str() {
-            "week" => "settimana",
-            "year" => "anno",
-            _ => "mese",
-        };
-        match b.state {
-            "sforato" => alerts.push(Alert {
-                level: Level::Critical,
-                message: format!(
-                    "{}: budget della {period} sforato ({} su {}).",
-                    b.category,
-                    fmt_eur(b.spent),
-                    fmt_eur(b.limit)
-                ),
-            }),
-            "attenzione" => alerts.push(Alert {
-                level: Level::Warning,
-                message: format!(
-                    "{}: {:.0}% del budget della {period} usato al {:.0}% del periodo.",
-                    b.category,
-                    b.used * 100.0,
-                    b.elapsed * 100.0
-                ),
-            }),
-            _ => {}
-        }
+    for b in budgets.iter().filter(|b| b.budget.enabled) {
+        alerts.extend(budget_alert(b, today));
     }
     for s in analysis::sinking_funds(&planned, today) {
         if (s.due - today).num_days() <= 30 {
             alerts.push(Alert {
                 level: Level::Info,
-                message: format!(
+                kind: "upcoming",
+                message: tr!(
                     "In arrivo: {} da {} il {}.",
+                    "Coming up: {}, {} on {}.",
                     s.name,
                     fmt_eur(s.amount),
                     s.due.format("%d/%m/%Y")
@@ -221,25 +218,30 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
         .into_iter()
         .filter(|r| r.active && !r.planned)
     {
+        let every = match r.cadence {
+            Cadence::Week => tr!("a settimana", "a week"),
+            Cadence::Month => tr!("al mese", "a month"),
+            Cadence::Year => tr!("all'anno", "a year"),
+        };
         alerts.push(Alert {
             level: Level::Info,
-            message: format!(
+            kind: "recurring",
+            message: tr!(
                 "Spesa ricorrente non pianificata: {} (~{} {}). Aggiungila alle spese previste o valuta se disdirla.",
+                "Unplanned recurring expense: {} (~{} {}). Add it to your planned expenses or consider cancelling it.",
                 r.merchant,
                 fmt_eur(r.typical_amount),
-                match r.cadence {
-                    Cadence::Week => "a settimana",
-                    Cadence::Month => "al mese",
-                    Cadence::Year => "all'anno",
-                }
+                every
             ),
         });
     }
     for a in analysis::anomalies(conn, today)? {
         alerts.push(Alert {
             level: Level::Warning,
-            message: format!(
+            kind: "anomaly",
+            message: tr!(
                 "Spesa insolita il {}: {} {} in {} (di solito ~{}).",
+                "Unusual expense on {}: {} {} in {} (usually ~{}).",
                 a.date.format("%d/%m"),
                 a.merchant,
                 fmt_eur(a.amount),
@@ -256,7 +258,18 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
     if uncategorized > 0 {
         alerts.push(Alert {
             level: Level::Info,
-            message: format!("{uncategorized} {} da categorizzare (chiedi all'AI: \"categorizza le transazioni in sospeso\").", if uncategorized == 1 { "transazione" } else { "transazioni" }),
+            kind: "uncategorized",
+            message: if uncategorized == 1 {
+                tr!(
+                    "1 transazione da categorizzare (chiedi all'AI: \"categorizza le transazioni in sospeso\").",
+                    "1 uncategorized transaction (ask the AI: \"categorize the pending transactions\")."
+                )
+            } else {
+                tr!(
+                    "{uncategorized} transazioni da categorizzare (chiedi all'AI: \"categorizza le transazioni in sospeso\").",
+                    "{uncategorized} uncategorized transactions (ask the AI: \"categorize the pending transactions\")."
+                )
+            },
         });
     }
     alerts.extend(account_alerts(conn, today)?);
@@ -281,6 +294,7 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
         savings_goal: eur(goal),
         variable_budget: eur(variable_budget),
         variable_spent: eur(variable_spent),
+        reserved: eur(reserved),
         available_month: eur(available),
         available_per_day: eur(per_day),
         available_week: eur(per_day * week_days_left),
@@ -293,21 +307,119 @@ pub fn status(conn: &Connection, today: NaiveDate) -> Result<Status> {
     })
 }
 
+/// The most relevant alert for one budget, if any.
+fn budget_alert(b: &budgets::BudgetStatus, today: NaiveDate) -> Option<Alert> {
+    let name = &b.name;
+    if let Some(p) = b.problems.first() {
+        return Some(Alert {
+            level: Level::Warning,
+            kind: "budget",
+            message: tr!("Budget «{name}»: {p}.", "Budget “{name}”: {p}."),
+        });
+    }
+    match b.phase {
+        Phase::Upcoming => return None,
+        // A finished budget (fixed dates) is summed up for a week, then it goes quiet.
+        Phase::Ended if (today - b.end).num_days() <= 7 => {
+            let (value, limit) = (fmt_eur(b.value), fmt_eur(b.limit));
+            return Some(Alert {
+                level: Level::Info,
+                kind: "budget",
+                message: if b.goal == Goal::MaxSpend {
+                    tr!(
+                        "Budget «{name}» concluso: speso {value} su {limit}.",
+                        "Budget “{name}” ended: spent {value} of {limit}."
+                    )
+                } else {
+                    tr!(
+                        "Budget «{name}» concluso: raggiunto {value} su {limit}.",
+                        "Budget “{name}” ended: reached {value} of {limit}."
+                    )
+                },
+            });
+        }
+        Phase::Ended => return None,
+        Phase::Active => {}
+    }
+    let (level, message) = match (b.goal, b.state) {
+        (_, State::Sforato) => (
+            Level::Critical,
+            tr!(
+                "Budget «{name}» sforato: {} su {} ({}).",
+                "Budget “{name}” over: {} of {} ({}).",
+                fmt_eur(b.value),
+                fmt_eur(b.limit),
+                b.period_label
+            ),
+        ),
+        (Goal::MaxSpend, State::Attenzione) => {
+            let threshold = b.thresholds_reached.iter().rev().find(|t| **t < 100);
+            let text = match threshold {
+                Some(t) => tr!("superato l'{t}%", "past {t}%"),
+                None => tr!(
+                    "{:.0}% usato al {:.0}% del periodo",
+                    "{:.0}% used {:.0}% into the period",
+                    b.used * 100.0,
+                    b.elapsed * 100.0
+                ),
+            };
+            (
+                Level::Warning,
+                tr!(
+                    "Budget «{name}»: {text} ({} su {}, restano {}).",
+                    "Budget “{name}”: {text} ({} of {}, {} left).",
+                    fmt_eur(b.value),
+                    fmt_eur(b.limit),
+                    fmt_eur(b.remaining)
+                ),
+            )
+        }
+        (_, State::Indietro) => (
+            Level::Warning,
+            tr!(
+                "Budget «{name}» indietro: {} su {} al {:.0}% del periodo.",
+                "Budget “{name}” behind: {} of {} {:.0}% into the period.",
+                fmt_eur(b.value),
+                fmt_eur(b.limit),
+                b.elapsed * 100.0
+            ),
+        ),
+        _ => return None,
+    };
+    Some(Alert {
+        level,
+        kind: "budget",
+        message,
+    })
+}
+
 /// Turn a raw sync error into a short explanation for the user.
 pub fn explain_sync_error(msg: &str) -> String {
     let m = msg.to_lowercase();
     if m.contains("wrong_transactions_period") {
-        "la banca ha rifiutato il periodo di storico richiesto".into()
+        tr!(
+            "la banca ha rifiutato il periodo di storico richiesto",
+            "the bank refused the requested history period"
+        )
     } else if m.contains("not active") {
-        "l'applicazione Enable Banking non è attiva".into()
+        tr!(
+            "l'applicazione Enable Banking non è attiva",
+            "the Enable Banking application is not active"
+        )
     } else if m.contains(" 401 ")
         || m.contains(" 403 ")
         || m.contains(" 410 ")
         || m.contains("expired")
     {
-        "consenso scaduto o revocato: esegui `fine connect`".into()
+        tr!(
+            "consenso scaduto o revocato: esegui `fine connect`",
+            "consent expired or revoked: run `fine connect`"
+        )
     } else if m.contains(" 429 ") || m.contains("rate") {
-        "limite di letture giornaliere raggiunto, riprovo al prossimo turno".into()
+        tr!(
+            "limite di letture giornaliere raggiunto, riprovo al prossimo turno",
+            "daily read limit reached, retrying next round"
+        )
     } else {
         msg.chars().take(160).collect()
     }
@@ -349,21 +461,26 @@ fn account_alerts(conn: &Connection, today: NaiveDate) -> Result<Vec<Alert>> {
             if days < 0 {
                 out.push(Alert {
                     level: Level::Critical,
-                    message: format!(
-                        "Consenso bancario scaduto per {name}: esegui `fine connect`."
+                    kind: "consent",
+                    message: tr!(
+                        "Consenso bancario scaduto per {name}: esegui `fine connect`.",
+                        "Bank consent expired for {name}: run `fine connect`."
                     ),
                 });
             } else if days <= 14 {
                 out.push(Alert {
                     level: Level::Warning,
-                    message: format!("Il consenso bancario per {name} scade tra {days} giorni: rinnovalo con `fine connect`."),
+                    kind: "consent",
+                    message: tr!(
+                        "Il consenso bancario per {name} scade tra {days} giorni: rinnovalo con `fine connect`.",
+                        "Bank consent for {name} expires in {days} days: renew it with `fine connect`."
+                    ),
                 });
             }
         }
         match (last_ok, last_success) {
             (Some(0), _) => {
-                let reason =
-                    explain_sync_error(last_msg.as_deref().unwrap_or("errore sconosciuto"));
+                let reason = explain_sync_error(last_msg.as_deref().unwrap_or("?"));
                 match failed.iter_mut().find(|(r, _)| *r == reason) {
                     Some((_, names)) => names.push(name),
                     None => failed.push((reason, vec![name])),
@@ -377,27 +494,41 @@ fn account_alerts(conn: &Connection, today: NaiveDate) -> Result<Vec<Alert>> {
                 if hours > 24 {
                     out.push(Alert {
                         level: Level::Warning,
-                        message: format!("{name}: ultimo aggiornamento riuscito {} ore fa, i dati potrebbero essere incompleti.", hours),
+                        kind: "stale",
+                        message: tr!(
+                            "{name}: ultimo aggiornamento riuscito {hours} ore fa, i dati potrebbero essere incompleti.",
+                            "{name}: last successful update {hours} hours ago, the data may be incomplete."
+                        ),
                     });
                 }
             }
         }
     }
     for (reason, names) in failed {
+        let list = names.join(", ");
         out.push(Alert {
             level: Level::Critical,
-            message: format!(
-                "Sincronizzazione fallita per {}: {reason}. I dati di {} non sono aggiornati e il disponibile può essere sbagliato.",
-                names.join(", "),
-                if names.len() == 1 { "questo conto" } else { "questi conti" }
-            ),
+            kind: "sync",
+            message: if names.len() == 1 {
+                tr!(
+                    "Sincronizzazione fallita per {list}: {reason}. I dati di questo conto non sono aggiornati e il disponibile può essere sbagliato.",
+                    "Sync failed for {list}: {reason}. This account's data is out of date and what you can spend may be wrong."
+                )
+            } else {
+                tr!(
+                    "Sincronizzazione fallita per {list}: {reason}. I dati di questi conti non sono aggiornati e il disponibile può essere sbagliato.",
+                    "Sync failed for {list}: {reason}. These accounts' data is out of date and what you can spend may be wrong."
+                )
+            },
         });
     }
     if !never.is_empty() {
         out.push(Alert {
             level: Level::Critical,
-            message: format!(
+            kind: "sync",
+            message: tr!(
                 "Mai sincronizzati: {}. Esegui `fine sync`.",
+                "Never synced: {}. Run `fine sync`.",
                 never.join(", ")
             ),
         });
@@ -421,6 +552,12 @@ pub fn render(s: &Status) -> String {
             fmt((s.variable_budget * 100.0).round() as i64),
             s.budget_used * 100.0,
             s.month_elapsed * 100.0
+        ));
+    }
+    if s.reserved > 0.0 {
+        out.push_str(&format!(
+            "Già riservato ai budget: {}\n",
+            fmt((s.reserved * 100.0).round() as i64)
         ));
     }
     if let Some(b) = s.balance_total {
@@ -544,5 +681,39 @@ mod tests {
         let s = status(&conn, d("2026-11-10")).unwrap();
         assert_eq!(s.variable_spent, 0.0);
         assert_eq!(s.sinking_fund_quota, 50.0);
+    }
+
+    #[test]
+    fn reserved_budgets_reduce_available_and_alert_once_over() {
+        let conn = db::open_in_memory().unwrap();
+        db::set_setting(&conn, "savings_goal_cents", "0").unwrap();
+        let stip = db::category_id(&conn, "Stipendio").unwrap();
+        conn.execute("INSERT INTO planned (name, kind, amount_cents, cadence, next_due, category_id) VALUES ('Stipendio','income',200000,'month','2026-11-27',?1)", params![stip]).unwrap();
+        let before = status(&conn, d("2026-11-10")).unwrap().available_month;
+        let trip: budgets::Budget = serde_json::from_value(serde_json::json!({
+            "name": "Viaggio", "amount": 300, "reserve": true,
+            "period": {"type": "custom", "from": "2026-11-20", "to": "2026-11-29"}
+        }))
+        .unwrap();
+        budgets::upsert(&conn, trip, None).unwrap();
+        let s = status(&conn, d("2026-11-10")).unwrap();
+        assert_eq!(s.reserved, 300.0);
+        assert_eq!(s.available_month, before - 300.0);
+
+        let svago: budgets::Budget = serde_json::from_value(serde_json::json!({
+            "name": "Svago", "amount": 50, "period": {"type": "month"},
+            "rule": {"category": ["Svago"]}
+        }))
+        .unwrap();
+        budgets::upsert(&conn, svago, None).unwrap();
+        add_tx(&conn, "2026-11-03", -6000, "cinema", Some("Svago"));
+        let s = status(&conn, d("2026-11-10")).unwrap();
+        let over: Vec<_> = s
+            .alerts
+            .iter()
+            .filter(|a| a.message.contains("«Svago» sforato"))
+            .collect();
+        assert_eq!(over.len(), 1);
+        assert_eq!(over[0].level, Level::Critical);
     }
 }

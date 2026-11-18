@@ -10,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { t } from "@/lib/i18n";
 
 export function ConfirmDialog({
   open,
@@ -40,7 +41,7 @@ export function ConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Annulla</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{t("Annulla")}</AlertDialogCancel>
           <AlertDialogAction
             variant={danger ? "destructive" : "default"}
             disabled={busy}

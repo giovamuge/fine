@@ -239,6 +239,6 @@ fine serve                             # API su http://127.0.0.1:7878
 cd web && npm install && npm run dev   # Vite su http://localhost:5173
 ```
 
-Un tag `vX.Y.Z` pubblica i binari della release; prima allinea la versione in `Cargo.toml` e in `.claude-plugin/plugin.json`.
+Per pubblicare una release lancia Actions → **Release** → *Run workflow* e scrivi la versione (es. `0.3.0`): compila i binari e crea tag e release `vX.Y.Z`. Funziona anche il push di un tag `vX.Y.Z`. Tieni allineata la versione in `Cargo.toml` e in `.claude-plugin/plugin.json`.
 
 Ispirato a [BankMCP](https://github.com/noskillish/bankmcp) (MIT). Licenza: [MIT](LICENSE).

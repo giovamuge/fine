@@ -6,6 +6,11 @@ const FILL: Record<BudgetState | "neutral", string> = {
   ok: "bg-positive",
   attenzione: "bg-warning",
   sforato: "bg-destructive",
+  in_linea: "bg-primary",
+  indietro: "bg-warning",
+  raggiunto: "bg-positive",
+  mancato: "bg-destructive",
+  sospeso: "bg-muted-foreground/40",
   neutral: "bg-primary",
 };
 

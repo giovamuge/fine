@@ -126,6 +126,19 @@ CREATE TABLE tag_rules (
     // v6: customizable categories (icon, color); the missing defaults are added by `seed_v6`
     "ALTER TABLE categories ADD COLUMN icon TEXT;
      ALTER TABLE categories ADD COLUMN color TEXT;",
+    // v7: dynamic budgets (see budgets.rs): named, with a JSON definition (rule, period, options).
+    // The old per-category budgets are converted by `migrate_budgets_v7`.
+    r#"
+CREATE TABLE budgets_v7 (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    definition TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"#,
+    // v8: a PayPal purchase records the bank debit that paid for it (see reconcile.rs);
+    // the existing history is reconciled right after the migration
+    "ALTER TABLE transactions ADD COLUMN funded_by INTEGER REFERENCES transactions(id) ON DELETE SET NULL;",
 ];
 
 /// Default categories (Italian). (name, kind, icon)
@@ -275,6 +288,12 @@ fn init(conn: &mut Connection) -> Result<()> {
         if i == 5 {
             seed_v6(&tx)?;
         }
+        if i == 6 {
+            migrate_budgets_v7(&tx)?;
+        }
+        if i == 7 {
+            crate::reconcile::paypal(&tx)?;
+        }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
@@ -300,6 +319,44 @@ fn seed(conn: &Connection) -> Result<()> {
 
 /// Adds the default categories an older database lacks, gives every default its icon and lets
 /// the AI look again at what it could not place before (the new categories may fit).
+/// Old budgets (category, week/month/year, amount) become named dynamic budgets.
+fn migrate_budgets_v7(conn: &Connection) -> Result<()> {
+    let old: Vec<(String, String, i64, i64)> = conn
+        .prepare(
+            "SELECT c.name, b.period, b.amount_cents,
+                    (SELECT COUNT(*) FROM budgets o WHERE o.category_id = b.category_id)
+             FROM budgets b JOIN categories c ON c.id = b.category_id",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    for (category, period, cents, same_category) in old {
+        let name = if same_category > 1 {
+            let label = match period.as_str() {
+                "week" => "settimana",
+                "year" => "anno",
+                _ => "mese",
+            };
+            format!("{category} ({label})")
+        } else {
+            category.clone()
+        };
+        let definition = serde_json::json!({
+            "name": name,
+            "goal": "max_spend",
+            "rule": { "category": [category] },
+            "period": { "type": period },
+            "amount": cents as f64 / 100.0,
+            "alerts": [100],
+        });
+        conn.execute(
+            "INSERT INTO budgets_v7 (name, definition) VALUES (?1, ?2)",
+            params![name, definition.to_string()],
+        )?;
+    }
+    conn.execute_batch("DROP TABLE budgets; ALTER TABLE budgets_v7 RENAME TO budgets;")?;
+    Ok(())
+}
+
 fn seed_v6(conn: &Connection) -> Result<()> {
     for (name, kind, icon) in DEFAULT_CATEGORIES {
         conn.execute(
@@ -371,5 +428,44 @@ mod tests {
             .unwrap();
         assert_eq!(n as usize, super::DEFAULT_RULES.len());
         assert!(super::category_id(&conn, "spesa alimentare").is_ok());
+    }
+
+    #[test]
+    fn v7_converts_old_budgets() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        for (i, sql) in super::MIGRATIONS.iter().enumerate().take(6) {
+            conn.execute_batch(sql).unwrap();
+            if i == 0 {
+                super::seed(&conn).unwrap();
+            }
+            if i == 5 {
+                super::seed_v6(&conn).unwrap();
+            }
+        }
+        conn.pragma_update(None, "user_version", 6).unwrap();
+        conn.execute_batch(
+            "INSERT INTO budgets SELECT id, 'month', 30000 FROM categories WHERE name = 'Ristoranti e bar';
+             INSERT INTO budgets SELECT id, 'week', 8000 FROM categories WHERE name = 'Ristoranti e bar';
+             INSERT INTO budgets SELECT id, 'year', 50000 FROM categories WHERE name = 'Viaggi';",
+        )
+        .unwrap();
+        super::init(&mut conn).unwrap();
+        let all = crate::budgets::statuses(
+            &conn,
+            chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(),
+        )
+        .unwrap();
+        let names: Vec<&str> = all.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Ristoranti e bar (mese)",
+                "Ristoranti e bar (settimana)",
+                "Viaggi"
+            ]
+        );
+        assert_eq!(all[0].amount, 300.0);
+        assert_eq!(all[2].period_label, "ogni anno");
+        assert_eq!(all[2].rule_summary, "categoria Viaggi");
     }
 }

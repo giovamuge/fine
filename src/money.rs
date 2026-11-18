@@ -53,27 +53,28 @@ pub fn eur(cents: i64) -> f64 {
     cents as f64 / 100.0
 }
 
-/// Italian formatting: 1.234,56 €
+/// In the current language (see i18n.rs): 1.234,56 € in Italian, €1,234.56 in English.
 pub fn fmt(cents: i64) -> String {
+    let en = crate::i18n::en();
     let neg = cents < 0;
     let abs = cents.unsigned_abs();
     let int = (abs / 100).to_string();
     let mut grouped = String::new();
     for (i, ch) in int.chars().enumerate() {
         if i > 0 && (int.len() - i).is_multiple_of(3) {
-            grouped.push('.');
+            grouped.push(if en { ',' } else { '.' });
         }
         grouped.push(ch);
     }
-    format!(
-        "{}{},{:02} €",
-        if neg { "-" } else { "" },
-        grouped,
-        abs % 100
-    )
+    let sign = if neg { "-" } else { "" };
+    if en {
+        format!("{sign}€{grouped}.{:02}", abs % 100)
+    } else {
+        format!("{sign}{grouped},{:02} €", abs % 100)
+    }
 }
 
-/// Format a display euro value (from JSON-facing f64) in Italian style.
+/// Format a display euro value (from JSON-facing f64), like `fmt`.
 pub fn fmt_eur(eur: f64) -> String {
     fmt((eur * 100.0).round() as i64)
 }

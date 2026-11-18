@@ -16,7 +16,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::config::{Config, Paths};
-use crate::{ai, analysis, assistant, categorize, connect, db, enablebanking, ops, sync, tags};
+use crate::{
+    ai, analysis, assistant, budgets, categorize, connect, db, enablebanking, ops, sync, tags,
+};
 
 /// The frontend built by build.rs (React + Vite). Hashed files live under assets/.
 #[derive(rust_embed::RustEmbed)]
@@ -53,7 +55,9 @@ where
     F: FnOnce(&mut rusqlite::Connection) -> Result<T> + Send + 'static,
 {
     let path = state.paths.db.clone();
+    let lang = crate::i18n::lang();
     tokio::task::spawn_blocking(move || {
+        crate::i18n::set_thread(lang);
         let mut conn = db::open(&path)?;
         f(&mut conn)
     })
@@ -174,6 +178,23 @@ struct DaysQuery {
 }
 
 #[derive(Deserialize)]
+struct BudgetBody {
+    budget: budgets::Budget,
+    /// Current name, when renaming
+    replaces: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct NameQuery {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct NameBody {
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct AmortizeBody {
     transaction_id: i64,
     months: i64,
@@ -211,7 +232,7 @@ pub fn router(paths: Paths, config: Config, password: Option<String>) -> Router 
                 |State(s): State<Shared>, Json(b): Json<NewCategoryBody>| async move {
                     with_db(&s, move |c| {
                         if ops::list_categories(c)?.iter().any(|x| x.name.eq_ignore_ascii_case(b.name.trim())) {
-                            anyhow::bail!("esiste già una categoria {:?}", b.name.trim());
+                            anyhow::bail!(crate::tr!("esiste già una categoria {:?}", "a category {:?} already exists", b.name.trim()));
                         }
                         ops::upsert_category(c, &b.name, &b.kind)?;
                         let patch = ops::CategoryPatch { icon: Some(b.icon), color: Some(b.color), ..Default::default() };
@@ -238,6 +259,33 @@ pub fn router(paths: Paths, config: Config, password: Option<String>) -> Router 
             "/api/categories/delete",
             post(|State(s): State<Shared>, Json(b): Json<DeleteCategoryBody>| async move {
                 with_db(&s, move |c| ops::delete_category(c, &b.name, b.move_to.as_deref())).await
+            }),
+        )
+        .route(
+            "/api/budgets",
+            get(|State(s): State<Shared>, Query(q): Query<NameQuery>| async move {
+                with_db(&s, move |c| {
+                    Ok(match q.name {
+                        Some(n) => serde_json::to_value(budgets::status_of(c, &n, today())?)?,
+                        None => serde_json::to_value(budgets::statuses(c, today())?)?,
+                    })
+                })
+                .await
+            })
+            .post(|State(s): State<Shared>, Json(b): Json<BudgetBody>| async move {
+                with_db(&s, move |c| budgets::upsert(c, b.budget, b.replaces.as_deref())).await
+            }),
+        )
+        .route(
+            "/api/budgets/preview",
+            post(|State(s): State<Shared>, Json(b): Json<BudgetBody>| async move {
+                with_db(&s, move |c| budgets::preview(c, b.budget, today())).await
+            }),
+        )
+        .route(
+            "/api/budgets/delete",
+            post(|State(s): State<Shared>, Json(b): Json<NameBody>| async move {
+                with_db(&s, move |c| budgets::delete(c, &b.name)).await
             }),
         )
         .route("/api/recurring", get(|State(s): State<Shared>| async move { with_db(&s, |c| analysis::recurring(c, today())).await }))
@@ -445,7 +493,14 @@ async fn auth(State(state): State<Shared>, req: Request, next: Next) -> Response
         )
             .into_response();
     }
-    let mut resp = next.run(req).await;
+    // The dashboard's language for the text the server writes (alerts, budget descriptions).
+    let lang = req
+        .headers()
+        .get("x-fine-lang")
+        .and_then(|v| v.to_str().ok())
+        .map(crate::i18n::Lang::parse)
+        .unwrap_or_default();
+    let mut resp = crate::i18n::TASK_LANG.scope(lang, next.run(req)).await;
     let h = resp.headers_mut();
     h.insert(
         header::X_CONTENT_TYPE_OPTIONS,

@@ -25,6 +25,7 @@ import { useToast } from "@/lib/toast";
 import type { CategoryKind, CategoryView, Rule } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 import { cn } from "@/lib/utils";
+import { t, tn } from "@/lib/i18n";
 
 const SOURCE: Record<string, string> = { seed: "predefinita", manual: "tua", ai: "AI", learned: "tua" };
 
@@ -45,11 +46,11 @@ export function Categorie() {
   return (
     <>
       <PageHeader
-        title="Categorie"
-        description="Personalizza nomi, icone e colori. Le regole assegnano la categoria ai nuovi movimenti in automatico."
+        title={t("Categorie")}
+        description={t("Personalizza nomi, icone e colori. Le regole assegnano la categoria ai nuovi movimenti in automatico.")}
         actions={
           <Button onClick={() => setEditing("new")}>
-            <Plus /> Nuova categoria
+            <Plus /> {t("Nuova categoria")}
           </Button>
         }
       />
@@ -68,7 +69,7 @@ export function Categorie() {
           <InputGroupAddon>
             <Search />
           </InputGroupAddon>
-          <InputGroupInput placeholder="Cerca una categoria" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Cerca una categoria" />
+          <InputGroupInput placeholder={t("Cerca una categoria")} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label={t("Cerca una categoria")} />
         </InputGroup>
       </div>
       <p className="-mt-3 text-sm text-muted-foreground">{KIND_HINT[kind]}</p>
@@ -76,7 +77,7 @@ export function Categorie() {
       {categories.length === 0 ? (
         <Rows rows={6} />
       ) : list.length === 0 ? (
-        <Empty title={filter ? "Nessuna categoria trovata." : "Nessuna categoria di questo tipo."} action={<Button variant="outline" onClick={() => setEditing("new")}><Plus /> Crea categoria</Button>} />
+        <Empty title={filter ? t("Nessuna categoria trovata.") : t("Nessuna categoria di questo tipo.")} action={<Button variant="outline" onClick={() => setEditing("new")}><Plus /> {t("Crea categoria")}</Button>} />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((c) => {
@@ -94,7 +95,7 @@ export function Categorie() {
                   {amount !== undefined && (
                     <span className="flex shrink-0 flex-col items-end">
                       <span className="tabular text-sm font-medium">{euro(amount)}</span>
-                      <span className="text-[11px] text-muted-foreground">questo mese</span>
+                      <span className="text-[11px] text-muted-foreground">{t("questo mese")}</span>
                     </span>
                   )}
                 </button>
@@ -164,10 +165,10 @@ function CategoryEditor({
           icon: icon !== (category.icon ?? "") ? icon : undefined,
           color: color !== (category.color ?? "") ? color : undefined,
         });
-        toast.success(`Categoria «${n}» aggiornata.`);
+        toast.success(t("Categoria «{name}» aggiornata.", { name: n }));
       } else {
         await api.createCategory(n, kind, icon, color);
-        toast.success(`Categoria «${n}» creata. L'AI la userà per i movimenti ancora da categorizzare.`);
+        toast.success(t("Categoria «{name}» creata. L'AI la userà per i movimenti ancora da categorizzare.", { name: n }));
       }
       refresh();
       onClose();
@@ -182,7 +183,7 @@ function CategoryEditor({
     try {
       await api.deleteRule(r.id);
       refresh();
-      toast.success(`Regola «${r.pattern}» eliminata: i movimenti già categorizzati restano come sono.`);
+      toast.success(t("Regola «{rule}» eliminata: i movimenti già categorizzati restano come sono.", { rule: r.pattern }));
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -192,20 +193,20 @@ function CategoryEditor({
     <ResponsiveDialog
       open={open}
       onClose={onClose}
-      title={category ? "Modifica categoria" : "Nuova categoria"}
+      title={category ? t("Modifica categoria") : t("Nuova categoria")}
       footer={
         <>
           {category && (
             <Button variant="destructive" className="sm:mr-auto" onClick={() => onDelete(category)} disabled={busy}>
-              <Trash2 /> Elimina
+              <Trash2 /> {t("Elimina")}
             </Button>
           )}
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            Annulla
+            {t("Annulla")}
           </Button>
           <Button onClick={save} disabled={busy || !name.trim()}>
             {busy && <Loader2 className="animate-spin" />}
-            {category ? "Salva" : "Crea"}
+            {category ? t("Salva") : t("Crea")}
           </Button>
         </>
       }
@@ -214,13 +215,13 @@ function CategoryEditor({
         <div className="flex items-center gap-3">
           <CategoryIcon category={preview} className="size-14 rounded-2xl text-2xl" />
           <div className="flex flex-1 flex-col gap-1.5">
-            <Label htmlFor="cat-name">Nome</Label>
-            <Input id="cat-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="Es. Bicicletta" autoFocus={!category} onKeyDown={(e) => e.key === "Enter" && save()} />
+            <Label htmlFor="cat-name">{t("Nome")}</Label>
+            <Input id="cat-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder={t("Es. Bicicletta")} autoFocus={!category} onKeyDown={(e) => e.key === "Enter" && save()} />
           </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label>Tipo</Label>
+          <Label>{t("Tipo")}</Label>
           <Select value={kind} onValueChange={(v) => setKind(v as CategoryKind)}>
             <SelectTrigger className="w-full">
               <SelectValue />
@@ -237,14 +238,14 @@ function CategoryEditor({
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label htmlFor="cat-icon">Icona</Label>
+          <Label htmlFor="cat-icon">{t("Icona")}</Label>
           <div className="grid grid-cols-10 gap-1">
             {EMOJI.map((e) => (
               <button
                 key={e}
                 type="button"
                 onClick={() => setIcon(e)}
-                aria-label={`Icona ${e}`}
+                aria-label={t("Icona {emoji}", { emoji: e })}
                 aria-pressed={icon === e}
                 className={cn("flex aspect-square items-center justify-center rounded-md text-lg transition-colors hover:bg-muted", icon === e && "bg-muted ring-2 ring-primary")}
               >
@@ -253,24 +254,24 @@ function CategoryEditor({
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <Input id="cat-icon" value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={8} placeholder="…o scrivi qualsiasi emoji" className="max-w-56" />
+            <Input id="cat-icon" value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={8} placeholder={t("…o scrivi qualsiasi emoji")} className="max-w-56" />
             {icon && (
               <Button variant="ghost" size="sm" onClick={() => setIcon("")}>
-                Nessuna
+                {t("Nessuna")}
               </Button>
             )}
           </div>
         </div>
 
         <div className="flex flex-col gap-2">
-          <Label>Colore</Label>
-          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Colore">
+          <Label>{t("Colore")}</Label>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("Colore")}>
             <button
               type="button"
               role="radio"
               aria-checked={!color}
               onClick={() => setColor("")}
-              title="Automatico"
+              title={t("Automatico")}
               className={cn("flex size-8 items-center justify-center rounded-full border text-muted-foreground", !color && "ring-2 ring-primary ring-offset-2 ring-offset-background")}
             >
               <Wand2 className="size-4" />
@@ -288,7 +289,7 @@ function CategoryEditor({
               />
             ))}
           </div>
-          {!color && <span className="text-xs text-muted-foreground">Automatico: {COLOR_LABEL[colorOf(preview)].toLowerCase()}, ricavato dal nome.</span>}
+          {!color && <span className="text-xs text-muted-foreground">{t("Automatico: {color}, ricavato dal nome.", { color: COLOR_LABEL[colorOf(preview)].toLowerCase() })}</span>}
         </div>
 
         {category && (
@@ -296,9 +297,9 @@ function CategoryEditor({
             <Separator />
             <section className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold">Regole automatiche</h3>
+                <h3 className="text-sm font-semibold">{t("Regole automatiche")}</h3>
                 <Button variant="ghost" size="sm" onClick={() => navigate(href("/movimenti", { category: category.name }))}>
-                  {integer(category.transactions)} movimenti <ArrowRight />
+                  {plural(category.transactions, "movimento", "movimenti")} <ArrowRight />
                 </Button>
               </div>
               {rules.length ? (
@@ -311,14 +312,14 @@ function CategoryEditor({
                         {SOURCE[r.source] ?? r.source}
                       </Badge>
                       <span className="tabular w-14 text-right text-xs text-muted-foreground">{plural(r.hits, "uso", "usi")}</span>
-                      <Button variant="ghost" size="icon-sm" onClick={() => removeRule(r)} aria-label={`Elimina la regola ${r.pattern}`}>
+                      <Button variant="ghost" size="icon-sm" onClick={() => removeRule(r)} aria-label={t("Elimina la regola {rule}", { rule: r.pattern })}>
                         <Trash2 />
                       </Button>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">Nessuna regola. Si creano quando categorizzi un movimento scegliendo «usa anche per i prossimi», o dall'AI.</p>
+                <p className="text-sm text-muted-foreground">{t("Nessuna regola. Si creano quando categorizzi un movimento scegliendo «usa anche per i prossimi», o dall'AI.")}</p>
               )}
             </section>
           </>
@@ -354,8 +355,10 @@ function DeleteCategoryDialog({ category, onClose }: { category: CategoryView | 
       refresh();
       toast.success(
         r.moved_to
-          ? `«${c.name}» unita a «${r.moved_to}»: ${plural(r.transactions, "movimento spostato", "movimenti spostati")}, con le sue regole.`
-          : `«${c.name}» eliminata${r.transactions ? `: ${plural(r.transactions, "movimento torna", "movimenti tornano")} da categorizzare` : ""}.`,
+          ? tn(r.transactions, "«{name}» unita a «{target}»: {n} movimento spostato, con le sue regole.", "«{name}» unita a «{target}»: {n} movimenti spostati, con le sue regole.", { name: c.name, target: r.moved_to, n: integer(r.transactions) })
+          : r.transactions
+            ? tn(r.transactions, "«{name}» eliminata: {n} movimento torna da categorizzare.", "«{name}» eliminata: {n} movimenti tornano da categorizzare.", { name: c.name, n: integer(r.transactions) })
+            : t("«{name}» eliminata.", { name: c.name }),
       );
       onClose();
     } catch (e) {
@@ -369,16 +372,16 @@ function DeleteCategoryDialog({ category, onClose }: { category: CategoryView | 
     <ResponsiveDialog
       open={!!category}
       onClose={onClose}
-      title={`Eliminare «${c.name}»?`}
-      description={`Ha ${plural(c.transactions, "movimento", "movimenti")} e ${plural(c.rules, "regola", "regole")}.`}
+      title={t("Eliminare «{name}»?", { name: c.name })}
+      description={t("Ha {tx} e {rules}.", { tx: plural(c.transactions, "movimento", "movimenti"), rules: plural(c.rules, "regola", "regole") })}
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            Annulla
+            {t("Annulla")}
           </Button>
           <Button variant="destructive" onClick={run} disabled={busy || blocked}>
             {busy && <Loader2 className="animate-spin" />}
-            {mode === "move" ? "Unisci ed elimina" : "Elimina"}
+            {mode === "move" ? t("Unisci ed elimina") : t("Elimina")}
           </Button>
         </>
       }
@@ -387,16 +390,16 @@ function DeleteCategoryDialog({ category, onClose }: { category: CategoryView | 
         <Label htmlFor="del-move" className="flex items-start gap-3 rounded-lg border p-3 font-normal has-[[data-state=checked]]:border-primary">
           <RadioGroupItem id="del-move" value="move" className="mt-0.5" />
           <span className="flex flex-1 flex-col gap-2">
-            <span className="font-medium">Sposta tutto in un'altra categoria</span>
-            <span className="text-xs text-muted-foreground">Movimenti, regole, budget e spese previste passano lì: è un'unione.</span>
-            {mode === "move" && <CategoryPicker value={target} onChange={setTarget} placeholder="Scegli dove spostarli" ariaLabel="Categoria di destinazione" />}
+            <span className="font-medium">{t("Sposta tutto in un'altra categoria")}</span>
+            <span className="text-xs text-muted-foreground">{t("Movimenti, regole, budget e spese previste passano lì: è un'unione.")}</span>
+            {mode === "move" && <CategoryPicker value={target} onChange={setTarget} placeholder={t("Scegli dove spostarli")} ariaLabel={t("Categoria di destinazione")} />}
           </span>
         </Label>
         <Label htmlFor="del-none" className="flex items-start gap-3 rounded-lg border p-3 font-normal has-[[data-state=checked]]:border-primary">
           <RadioGroupItem id="del-none" value="none" className="mt-0.5" />
           <span className="flex flex-col gap-1">
-            <span className="font-medium">Lasciali da categorizzare</span>
-            <span className="text-xs text-muted-foreground">Regole e budget della categoria vengono eliminati; l'AI riproverà a categorizzare i movimenti.</span>
+            <span className="font-medium">{t("Lasciali da categorizzare")}</span>
+            <span className="text-xs text-muted-foreground">{t("Regole e budget della categoria vengono eliminati; l'AI riproverà a categorizzare i movimenti.")}</span>
           </span>
         </Label>
       </RadioGroup>

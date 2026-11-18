@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api, errorMessage } from "./api";
 import type { CategoryView, SyncOutcome } from "./types";
 import { useToast } from "./toast";
+import { t, tn } from "./i18n";
 
 export interface SyncState {
   running: boolean;
@@ -50,12 +51,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setSync({ running: false, result, error: null, at: new Date() });
       const failed = result.sync.accounts.filter((a) => a.error).length;
       const inserted = result.sync.accounts.reduce((n, a) => n + a.inserted, 0);
-      if (failed) toast.error(`Sincronizzazione con errori: ${failed} ${failed === 1 ? "conto non aggiornato" : "conti non aggiornati"}.`);
-      else toast.success(inserted ? `Sincronizzato: ${inserted} nuovi movimenti.` : "Sincronizzato: nessun nuovo movimento.");
+      if (failed) toast.error(tn(failed, "Sincronizzazione con errori: {n} conto non aggiornato.", "Sincronizzazione con errori: {n} conti non aggiornati."));
+      else toast.success(inserted ? tn(inserted, "Sincronizzato: {n} nuovo movimento.", "Sincronizzato: {n} nuovi movimenti.") : t("Sincronizzato: nessun nuovo movimento."));
     } catch (e) {
       const error = errorMessage(e);
       setSync({ running: false, result: null, error, at: new Date() });
-      toast.error(`Sincronizzazione fallita: ${error}`);
+      toast.error(t("Sincronizzazione fallita: {error}", { error }));
     } finally {
       refresh();
     }

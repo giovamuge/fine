@@ -5,20 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alerts } from "@/components/Alerts";
+import { BudgetRow, risk } from "@/components/BudgetCard";
 import { Meter } from "@/components/Meter";
 import { PageHeader } from "@/components/PageHeader";
 import { Empty, Loaded } from "@/components/States";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { api } from "@/lib/api";
 import { useApp } from "@/lib/app-state";
-import { CategoryIcon } from "@/lib/categories";
 import { euro, fmtMonth, integer, money, percent, relativeTime, signed } from "@/lib/format";
 import { Link } from "@/lib/router";
 import type { AccountView, BudgetState, Status } from "@/lib/types";
 import { useAsync } from "@/lib/useAsync";
 import { cn } from "@/lib/utils";
+import { t, tn } from "@/lib/i18n";
 
-export const CHANGE_LABEL: Record<number, string> = { 7: "7 giorni", 30: "30 giorni", 90: "3 mesi", 365: "1 anno" };
+export const CHANGE_LABEL: Record<number, string> = { 7: t("7 giorni"), 30: t("30 giorni"), 90: t("3 mesi"), 365: t("1 anno") };
 
 export function ChangeBadges({ changes }: { changes: { days: number; change: number }[] }) {
   return (
@@ -29,7 +30,7 @@ export function ChangeBadges({ changes }: { changes: { days: number; change: num
           variant="outline"
           className={cn("tabular font-normal", c.change > 0 && "border-positive/30 text-positive", c.change < 0 && "border-destructive/30 text-destructive")}
         >
-          {CHANGE_LABEL[c.days] ?? `${c.days} giorni`} {signed(c.change)}
+          {CHANGE_LABEL[c.days] ?? t("{n} giorni", { n: c.days })} {signed(c.change)}
         </Badge>
       ))}
     </div>
@@ -37,7 +38,7 @@ export function ChangeBadges({ changes }: { changes: { days: number; change: num
 }
 
 export function Overview() {
-  const { version, sync, runSync, categoryByName } = useApp();
+  const { version, sync, runSync } = useApp();
   const status = useAsync(() => api.status(), [version]);
   const balance = useAsync(() => api.balance(365), [version]);
   const accounts = useAsync(() => api.accounts(), [version]);
@@ -46,8 +47,8 @@ export function Overview() {
   return (
     <>
       <PageHeader
-        title="Panoramica"
-        description={status.data ? `${fmtMonth(status.data.month)} · ${integer(status.data.days_left_in_month)} giorni alla fine del mese` : " "}
+        title={t("Panoramica")}
+        description={status.data ? `${fmtMonth(status.data.month)} · ${tn(status.data.days_left_in_month, "{n} giorno alla fine del mese", "{n} giorni alla fine del mese", { n: integer(status.data.days_left_in_month) })}` : " "}
         actions={<SyncLine accounts={accounts.data} running={sync.running} onSync={runSync} />}
       />
 
@@ -68,7 +69,7 @@ export function Overview() {
             <Alerts alerts={important.length && !allAlerts ? important : st.alerts} />
             {info > 0 && important.length > 0 && (
               <Button variant="ghost" size="sm" className="self-start text-muted-foreground" onClick={() => setAllAlerts((v) => !v)} aria-expanded={allAlerts}>
-                {allAlerts ? "Nascondi le informazioni" : `Mostra ${integer(info)} ${info === 1 ? "informazione" : "informazioni"}`}
+                {allAlerts ? t("Nascondi le informazioni") : tn(info, "Mostra {n} informazione", "Mostra {n} informazioni", { n: integer(info) })}
               </Button>
             )}
           </section>
@@ -78,12 +79,12 @@ export function Overview() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Saldo</CardTitle>
-            <CardDescription>Totale dei conti in euro</CardDescription>
+            <CardTitle>{t("Saldo")}</CardTitle>
+            <CardDescription>{t("Totale dei conti in euro")}</CardDescription>
             <CardAction>
               <Button asChild variant="ghost" size="sm">
                 <Link to="/analisi#saldo">
-                  Andamento <ArrowRight />
+                  {t("Andamento")} <ArrowRight />
                 </Link>
               </Button>
             </CardAction>
@@ -92,7 +93,7 @@ export function Overview() {
             <Loaded {...balance} rows={3}>
               {(b) =>
                 b.current === null ? (
-                  <Empty title="Nessun saldo ancora.">Arriva con la prima sincronizzazione dopo aver collegato un conto.</Empty>
+                  <Empty title={t("Nessun saldo ancora.")}>{t("Arriva con la prima sincronizzazione dopo aver collegato un conto.")}</Empty>
                 ) : (
                   <div className="flex flex-col gap-4">
                     <div className="flex items-end justify-between gap-4">
@@ -106,7 +107,7 @@ export function Overview() {
                           <li key={a.account} className="flex justify-between gap-3 py-2">
                             <span className="min-w-0 truncate text-muted-foreground">
                               {a.account}
-                              {!a.in_total && <span> · escluso dal totale</span>}
+                              {!a.in_total && <span> · {t("escluso dal totale")}</span>}
                             </span>
                             <span className="tabular">{money(a.balance, a.currency)}</span>
                           </li>
@@ -122,45 +123,39 @@ export function Overview() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Budget</CardTitle>
-            <CardDescription>I più vicini al limite</CardDescription>
+            <CardTitle>{t("Budget")}</CardTitle>
+            <CardDescription>{t("I più vicini al limite")}</CardDescription>
             <CardAction>
               <Button asChild variant="ghost" size="sm">
-                <Link to="/analisi#budget">
-                  Tutti <ArrowRight />
+                <Link to="/budget">
+                  {t("Tutti")} <ArrowRight />
                 </Link>
               </Button>
             </CardAction>
           </CardHeader>
           <CardContent>
             <Loaded {...status} rows={3}>
-              {(st) =>
-                st.budgets.length ? (
+              {(st) => {
+                const active = st.budgets.filter((b) => b.state !== "sospeso" && b.phase === "active");
+                return active.length ? (
                   <ul className="flex flex-col gap-4">
-                    {[...st.budgets]
-                      .sort((a, b) => b.used - a.used)
+                    {[...active]
+                      .sort((a, b) => risk(b) - risk(a))
                       .slice(0, 4)
                       .map((b) => (
-                        <li key={`${b.category}-${b.period}`} className="flex items-center gap-3">
-                          <CategoryIcon category={categoryByName.get(b.category.toLowerCase())} />
-                          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                            <div className="flex justify-between gap-2 text-sm">
-                              <span className="truncate font-medium">{b.category}</span>
-                              <span className="tabular shrink-0">
-                                {euro(b.spent)} <span className="text-muted-foreground">/ {euro(b.limit)}</span>
-                              </span>
-                            </div>
-                            <Meter value={b.used} marker={b.elapsed} state={b.state} label={`${b.category}: ${percent(b.used)} del budget usato`} />
-                          </div>
+                        <li key={b.id}>
+                          <Link to="/budget" className="flex rounded-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+                            <BudgetRow b={b} />
+                          </Link>
                         </li>
                       ))}
                   </ul>
                 ) : (
-                  <Empty title="Nessun budget impostato.">
-                    Chiedi alla tua AI: «aiutami a impostare il piano mensile».
+                  <Empty title={t("Nessun budget attivo.")}>
+                    {t("Creane uno dalla sezione")} <Link to="/budget" className="underline underline-offset-4">{t("Budget")}</Link> {t("o chiedi alla tua AI: «aiutami a impostare il piano mensile».")}
                   </Empty>
-                )
-              }
+                );
+              }}
             </Loaded>
           </CardContent>
         </Card>
@@ -191,40 +186,41 @@ function Hero({ st }: { st: Status }) {
   const neg = st.available_month < 0;
   const pace: BudgetState = st.budget_used > 1 ? "sforato" : st.budget_used > st.month_elapsed + 0.15 ? "attenzione" : "ok";
   const rows: [string, string, boolean?][] = [
-    [`Entrate ${st.income_source === "planned" ? "pianificate" : "(media ultimi 3 mesi)"}: ricevute + attese`, euro(st.income_received + st.income_expected_remaining)],
-    ["Spese fisse: pagate + ancora da pagare", `− ${euro(st.fixed_paid + st.fixed_still_due)}`],
-    ["Accantonamenti per le spese annuali", `− ${euro(st.sinking_fund_quota)}`],
-    ["Obiettivo di risparmio", `− ${euro(st.savings_goal)}`],
-    ["Budget variabile", euro(st.variable_budget), true],
-    ["Spese variabili già fatte", `− ${euro(st.variable_spent)}`],
+    [st.income_source === "planned" ? t("Entrate pianificate: ricevute + attese") : t("Entrate (media ultimi 3 mesi): ricevute + attese"), euro(st.income_received + st.income_expected_remaining)],
+    [t("Spese fisse: pagate + ancora da pagare"), `− ${euro(st.fixed_paid + st.fixed_still_due)}`],
+    [t("Accantonamenti per le spese annuali"), `− ${euro(st.sinking_fund_quota)}`],
+    [t("Obiettivo di risparmio"), `− ${euro(st.savings_goal)}`],
+    [t("Budget variabile"), euro(st.variable_budget), true],
+    [t("Spese variabili già fatte"), `− ${euro(st.variable_spent)}`],
+    ...(st.reserved > 0 ? ([[t("Messo da parte per i budget"), `− ${euro(st.reserved)}`]] as [string, string][]) : []),
   ];
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-muted-foreground">Puoi ancora spendere questo mese</span>
+        <span className="text-sm font-medium text-muted-foreground">{t("Puoi ancora spendere questo mese")}</span>
         <span className={cn("tabular text-5xl font-semibold tracking-tighter", neg && "text-destructive")}>{euro(st.available_month)}</span>
         <span className="text-sm text-muted-foreground">
           {neg
-            ? `Hai superato il budget variabile di ${euro(-st.available_month)}: le prossime spese pesano sul risparmio.`
-            : `Spese variabili ${euro(st.variable_spent)} su ${euro(st.variable_budget)}`}
+            ? t("Hai superato il budget variabile di {amount}: le prossime spese pesano sul risparmio.", { amount: euro(-st.available_month) })
+            : t("Spese variabili {spent} su {budget}", { spent: euro(st.variable_spent), budget: euro(st.variable_budget) })}
         </span>
       </div>
       <Meter
         value={st.budget_used}
         marker={st.month_elapsed}
-        markerLabel="oggi"
+        markerLabel={t("oggi")}
         state={pace}
-        label={`Budget variabile usato: ${percent(st.budget_used)}, mese trascorso al ${percent(st.month_elapsed)}`}
+        label={t("Budget variabile usato: {used}, mese trascorso al {elapsed}", { used: percent(st.budget_used), elapsed: percent(st.month_elapsed) })}
       />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Tile label="Questa settimana" value={euro(st.available_week)} note={`già spesi ${euro(st.spent_this_week)}`} negative={st.available_week < 0} />
-        <Tile label="Al giorno" value={euro(st.available_per_day)} note={`per ${integer(st.days_left_in_month)} giorni`} negative={st.available_per_day < 0} />
-        {st.uncategorized > 0 && <Tile label="Da categorizzare" value={integer(st.uncategorized)} note="Sistemali ora →" to="/movimenti?uncategorized=1" />}
+        <Tile label={t("Questa settimana")} value={euro(st.available_week)} note={t("già spesi {amount}", { amount: euro(st.spent_this_week) })} negative={st.available_week < 0} />
+        <Tile label={t("Al giorno")} value={euro(st.available_per_day)} note={tn(st.days_left_in_month, "per {n} giorno", "per {n} giorni", { n: integer(st.days_left_in_month) })} negative={st.available_per_day < 0} />
+        {st.uncategorized > 0 && <Tile label={t("Da categorizzare")} value={integer(st.uncategorized)} note={t("Sistemali ora →")} to="/movimenti?uncategorized=1" />}
       </div>
       <Collapsible>
         <CollapsibleTrigger asChild>
           <Button variant="link" size="sm" className="group px-0 text-muted-foreground">
-            Come è calcolato <ChevronDown className="transition-transform group-data-[state=open]:rotate-180" />
+            {t("Come è calcolato")} <ChevronDown className="transition-transform group-data-[state=open]:rotate-180" />
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -251,13 +247,13 @@ function SyncLine({ accounts, running, onSync }: { accounts: AccountView[] | nul
       {accounts.length > 0 && (
         <span className={cn("flex items-center gap-1.5 text-sm", failed ? "text-destructive" : "text-muted-foreground")}>
           {failed ? <OctagonAlert className="size-4" /> : <Clock className="size-4" />}
-          {last ? `Aggiornato ${relativeTime(last)}` : "Mai sincronizzato"}
-          {failed && " · errori"}
+          {last ? t("Aggiornato {when}", { when: relativeTime(last) }) : t("Mai sincronizzato")}
+          {failed && ` · ${t("errori")}`}
         </span>
       )}
       <Button variant="outline" size="sm" onClick={onSync} disabled={running || accounts.length === 0}>
         <RefreshCw className={cn(running && "animate-spin")} />
-        {running ? "Sincronizzo…" : "Sincronizza"}
+        {running ? t("Sincronizzo…") : t("Sincronizza")}
       </Button>
     </>
   );
