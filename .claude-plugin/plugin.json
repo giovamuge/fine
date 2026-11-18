@@ -1,6 +1,6 @@
 {
   "name": "fine",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Personal finance on your bank accounts (Enable Banking, read-only): how much you can spend, budgets, tags, balance. Data stays local.",
   "author": { "name": "giovamuge" },
   "homepage": "https://github.com/giovamuge/fine",
