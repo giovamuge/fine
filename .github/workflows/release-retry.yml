@@ -1,0 +1,32 @@
+name: Release retry
+# GitHub sometimes has no macOS runner free: the job waits in the queue and is cancelled without
+# running a single step ("The job was not acquired by Runner"). When a Release run ends like
+# that, re-run its failed jobs, up to 3 attempts in all. Real failures (a step that ran and
+# failed) are left alone.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+permissions:
+  actions: write
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.conclusion != 'success' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/attempts/$ATTEMPT/jobs" --paginate --jq '.jobs[]')
+          real=$(jq -s '[.[] | select(.conclusion == "failure" and (.steps | length) > 0)] | length' <<< "$jobs")
+          never=$(jq -s '[.[] | select((.conclusion == "cancelled" or .conclusion == "failure") and (.steps | length) == 0)] | length' <<< "$jobs")
+          echo "failed jobs that ran: $real, jobs that never got a runner: $never"
+          if [ "$real" -eq 0 ] && [ "$never" -gt 0 ]; then
+            sleep 60
+            gh run rerun "$RUN" --failed --repo "$GITHUB_REPOSITORY"
+            echo "re-ran the failed jobs of run $RUN (attempt $ATTEMPT)"
+          fi
