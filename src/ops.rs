@@ -1,5 +1,6 @@
 //! Queries and mutations shared by the CLI, the MCP server and the dashboard.
 
+use crate::tr;
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use rusqlite::{Connection, params, params_from_iter, types::Value};
@@ -99,6 +100,28 @@ pub struct TxView {
     pub amortized_months: Option<i64>,
     pub account: String,
     pub tags: Vec<String>,
+    /// The other half of a reconciled PayPal payment (see reconcile.rs), described for the user.
+    pub reconciled: Option<String>,
+}
+
+/// The other half of a reconciled PayPal payment, from "name\x1fdd/mm/yyyy" (see `search`).
+fn reconciled_text(paid_from: Option<String>, pays_for: Option<String>) -> Option<String> {
+    let split = |s: &str| {
+        let (a, b) = s.split_once('\u{1f}').unwrap_or((s, ""));
+        (a.to_string(), b.to_string())
+    };
+    if let Some((account, date)) = paid_from.as_deref().map(split) {
+        return Some(tr!(
+            "addebitato su {account} il {date}",
+            "charged to {account} on {date}"
+        ));
+    }
+    pays_for.as_deref().map(split).map(|(merchant, date)| {
+        tr!(
+            "pagamento PayPal a {merchant} del {date}",
+            "PayPal payment to {merchant} on {date}"
+        )
+    })
 }
 
 pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
@@ -106,7 +129,11 @@ pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
         "SELECT t.id, t.booking_date, t.amount_cents, t.merchant, t.counterparty, t.description, c.name,
                 t.categorized_by, a.months, COALESCE(ac.label, ac.name, ac.iban, ac.uid),
                 (SELECT group_concat(g.name, ',') FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
-                 WHERE tt.transaction_id = t.id)
+                 WHERE tt.transaction_id = t.id),
+                (SELECT COALESCE(fa.label, fa.aspsp, fa.name, fa.uid) || char(31) || strftime('%d/%m/%Y', f.booking_date)
+                 FROM transactions f JOIN accounts fa ON fa.uid = f.account_uid WHERE f.id = t.funded_by),
+                (SELECT p.merchant || char(31) || strftime('%d/%m/%Y', p.booking_date)
+                 FROM transactions p WHERE p.funded_by = t.id)
          FROM transactions t
          LEFT JOIN categories c ON c.id = t.category_id
          LEFT JOIN amortizations a ON a.transaction_id = t.id
@@ -164,6 +191,7 @@ pub fn search(conn: &Connection, p: &SearchParams) -> Result<Vec<TxView>> {
                 .get::<_, Option<String>>(10)?
                 .map(|s| s.split(',').map(String::from).collect())
                 .unwrap_or_default(),
+            reconciled: reconciled_text(r.get(11)?, r.get(12)?),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -282,14 +310,16 @@ pub fn update_category(conn: &Connection, name: &str, patch: &CategoryPatch) -> 
             bail!("nome categoria vuoto");
         }
         if db::category_id(conn, new).is_ok_and(|other| other != id) {
-            bail!(
-                "esiste già una categoria {new:?}: per unirle elimina questa spostando i movimenti lì"
-            );
+            bail!(tr!(
+                "esiste già una categoria {new:?}: per unirle elimina questa spostando i movimenti lì",
+                "a category {new:?} already exists: to merge them, delete this one moving its transactions there"
+            ));
         }
         conn.execute(
             "UPDATE categories SET name = ?1 WHERE id = ?2",
             params![new, id],
         )?;
+        crate::budgets::rename_category(conn, name, new)?;
     }
     if let Some(kind) = &patch.kind {
         check_kind(kind)?;
@@ -322,7 +352,7 @@ pub struct DeleteCategoryOutcome {
 
 /// Delete a category. With `move_to` its transactions, rules, budgets and planned items move
 /// there (a merge); without, transactions become uncategorized (and the AI may look at them
-/// again) while its rules and budgets are deleted.
+/// again) while its rules are deleted (budget rules naming it are then reported as problems).
 pub fn delete_category(
     conn: &mut Connection,
     name: &str,
@@ -335,7 +365,11 @@ pub fn delete_category(
             if t == id {
                 bail!("non puoi spostare i movimenti nella stessa categoria");
             }
-            Some((t, m.to_string()))
+            let canonical: String =
+                conn.query_row("SELECT name FROM categories WHERE id = ?1", [t], |r| {
+                    r.get(0)
+                })?;
+            Some((t, canonical))
         }
         None => None,
     };
@@ -346,7 +380,7 @@ pub fn delete_category(
         |r| r.get(0),
     )?;
     match &target {
-        Some((t, _)) => {
+        Some((t, target_name)) => {
             tx.execute(
                 "UPDATE transactions SET category_id = ?1 WHERE category_id = ?2",
                 params![t, id],
@@ -355,11 +389,7 @@ pub fn delete_category(
                 "UPDATE rules SET category_id = ?1 WHERE category_id = ?2",
                 params![t, id],
             )?;
-            // The target's own budget wins where both have one for the same period.
-            tx.execute(
-                "UPDATE OR IGNORE budgets SET category_id = ?1 WHERE category_id = ?2",
-                params![t, id],
-            )?;
+            crate::budgets::rename_category(&tx, name, target_name)?;
             tx.execute(
                 "UPDATE planned SET category_id = ?1 WHERE category_id = ?2",
                 params![t, id],
@@ -379,32 +409,6 @@ pub fn delete_category(
         transactions,
         moved_to: target.map(|(_, n)| n),
     })
-}
-
-/// Set a budget for a category and period; amount 0 removes it.
-pub fn set_budget(
-    conn: &Connection,
-    category: &str,
-    period: &str,
-    amount_cents: i64,
-) -> Result<()> {
-    if Cadence::parse(period).is_none() {
-        bail!("periodo non valido: usa week, month o year");
-    }
-    let cat = db::category_id(conn, category)?;
-    if amount_cents <= 0 {
-        conn.execute(
-            "DELETE FROM budgets WHERE category_id = ?1 AND period = ?2",
-            params![cat, period],
-        )?;
-    } else {
-        conn.execute(
-            "INSERT INTO budgets (category_id, period, amount_cents) VALUES (?1, ?2, ?3)
-             ON CONFLICT(category_id, period) DO UPDATE SET amount_cents = excluded.amount_cents",
-            params![cat, period, amount_cents],
-        )?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -569,14 +573,18 @@ mod tests {
 
         tx(&conn, "1", "Bicicletta");
         tx(&conn, "2", "Bicicletta");
-        set_budget(&conn, "Bicicletta", "month", 5000).unwrap();
+        let bike: crate::budgets::Budget = serde_json::from_value(serde_json::json!({
+            "name": "Bici", "period": {"type": "month"}, "amount": 50, "rule": {"category": ["Bicicletta"]}
+        }))
+        .unwrap();
+        crate::budgets::upsert(&conn, bike, None).unwrap();
         let out = delete_category(&mut conn, "Bicicletta", Some("Sport e benessere")).unwrap();
         assert_eq!(out.transactions, 2);
         assert_eq!(count(&conn, "Sport e benessere"), 2);
-        let budgets: i64 = conn
-            .query_row("SELECT COUNT(*) FROM budgets b JOIN categories c ON c.id = b.category_id WHERE c.name = 'Sport e benessere'", [], |r| r.get(0))
+        let def: String = conn
+            .query_row("SELECT definition FROM budgets", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(budgets, 1);
+        assert!(def.contains("Sport e benessere"));
 
         let out = delete_category(&mut conn, "Sport e benessere", None).unwrap();
         assert_eq!(out.transactions, 2);

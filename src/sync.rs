@@ -4,6 +4,7 @@
 //! - Each sync re-reads a 7-day overlap and deduplicates, so nothing is missed.
 //! - At most `MAX_SYNCS_PER_DAY` syncs per account in a rolling 24h (PSD2 unattended limit).
 
+use crate::tr;
 use anyhow::Result;
 use chrono::{Days, NaiveDate, Utc};
 use rusqlite::{Connection, params};
@@ -215,8 +216,9 @@ pub async fn sync_all(conn: &mut Connection, client: &Client) -> Result<SyncRepo
             report.accounts.push(AccountSync {
                 account: label,
                 inserted: 0,
-                skipped: Some(format!(
-                    "già {used} sincronizzazioni nelle ultime 24h (limite PSD2)"
+                skipped: Some(tr!(
+                    "già {used} sincronizzazioni nelle ultime 24h (limite PSD2)",
+                    "already {used} syncs in the last 24h (PSD2 limit)"
                 )),
                 error: None,
             });
@@ -247,6 +249,7 @@ pub async fn sync_all(conn: &mut Connection, client: &Client) -> Result<SyncRepo
             error: msg,
         });
     }
+    crate::reconcile::paypal(conn)?;
     report.auto_categorized = apply_rules(conn)?;
     report.auto_tagged = crate::tags::apply_rules_to_new(conn)?;
     Ok(report)

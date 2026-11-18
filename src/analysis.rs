@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, HashMap};
 use crate::categorize::normalize_text;
 use crate::money::{eur, split};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Expense,
@@ -38,6 +40,9 @@ pub struct Tx {
     pub counterparty: Option<String>,
     pub description: Option<String>,
     pub amort_months: Option<i64>,
+    /// Lowercase account label, holder name, bank and IBAN (without spaces), for matching.
+    pub account: String,
+    pub tags: Vec<String>,
 }
 
 impl Tx {
@@ -174,10 +179,15 @@ pub fn load(conn: &Connection, from: NaiveDate, to: NaiveDate) -> Result<Vec<Tx>
     let amort_from = from - Months::new(120);
     let mut st = conn.prepare(
         "SELECT t.id, t.booking_date, t.amount_cents, t.category_id, c.name, c.kind, t.merchant,
-                t.counterparty, t.description, a.months
+                t.counterparty, t.description, a.months,
+                lower(COALESCE(ac.label, '') || ' ' || COALESCE(ac.name, '') || ' ' || COALESCE(ac.aspsp, '')
+                      || ' ' || replace(COALESCE(ac.iban, ''), ' ', '')),
+                (SELECT group_concat(g.name, ',') FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
+                 WHERE tt.transaction_id = t.id)
          FROM transactions t
          LEFT JOIN categories c ON c.id = t.category_id
          LEFT JOIN amortizations a ON a.transaction_id = t.id
+         LEFT JOIN accounts ac ON ac.uid = t.account_uid
          WHERE t.currency = ?4
            AND ((t.booking_date BETWEEN ?1 AND ?2)
             OR (a.months IS NOT NULL AND t.booking_date BETWEEN ?3 AND ?2))
@@ -212,6 +222,11 @@ pub fn load(conn: &Connection, from: NaiveDate, to: NaiveDate) -> Result<Vec<Tx>
                 counterparty: r.get(7)?,
                 description: r.get(8)?,
                 amort_months: r.get(9)?,
+                account: r.get::<_, Option<String>>(10)?.unwrap_or_default(),
+                tags: r
+                    .get::<_, Option<String>>(11)?
+                    .map(|t| t.split(',').map(str::to_string).collect())
+                    .unwrap_or_default(),
             })
         },
     )?;
@@ -256,6 +271,20 @@ pub struct Entry {
     pub fixed: bool,
 }
 
+/// Payment of an annual planned expense (covered by its sinking fund, not by monthly spending).
+pub fn is_annual(tx: &Tx, planned: &[Planned]) -> bool {
+    planned
+        .iter()
+        .any(|p| p.kind == Kind::Expense && p.cadence == Cadence::Year && p.matches(tx))
+}
+
+/// Payment of a weekly/monthly planned expense (a fixed cost).
+pub fn is_fixed(tx: &Tx, planned: &[Planned]) -> bool {
+    planned
+        .iter()
+        .any(|p| p.kind == Kind::Expense && p.cadence != Cadence::Year && p.matches(tx))
+}
+
 /// Effective expense entries in [from, to].
 pub fn expense_entries(
     txs: &[Tx],
@@ -265,15 +294,10 @@ pub fn expense_entries(
 ) -> Vec<Entry> {
     let mut out = Vec::new();
     for tx in txs.iter().filter(|t| t.kind == Kind::Expense) {
-        let annual = planned
-            .iter()
-            .any(|p| p.kind == Kind::Expense && p.cadence == Cadence::Year && p.matches(tx));
-        if annual {
+        if is_annual(tx, planned) {
             continue;
         }
-        let fixed = planned
-            .iter()
-            .any(|p| p.kind == Kind::Expense && p.cadence != Cadence::Year && p.matches(tx));
+        let fixed = is_fixed(tx, planned);
         let spent = -tx.cents;
         match tx.amort_months {
             Some(m) if m > 1 => {
@@ -433,74 +457,6 @@ pub fn average_income(conn: &Connection, today: NaiveDate) -> Result<i64> {
         return Ok(0);
     }
     Ok(income_between(&txs, from, to) / months_with_data.len() as i64)
-}
-
-#[derive(Debug, Serialize)]
-pub struct BudgetStatus {
-    pub category: String,
-    pub period: String,
-    pub limit: f64,
-    pub spent: f64,
-    pub remaining: f64,
-    /// spent / limit
-    pub used: f64,
-    /// fraction of the period elapsed
-    pub elapsed: f64,
-    /// "ok" | "attenzione" | "sforato"
-    pub state: &'static str,
-}
-
-pub fn period_range(period: &str, today: NaiveDate) -> (NaiveDate, NaiveDate) {
-    match period {
-        "week" => (week_start(today), week_start(today) + Days::new(6)),
-        "year" => (
-            year_start(today),
-            year_start(today) + Months::new(12) - Days::new(1),
-        ),
-        _ => (month_start(today), month_end(today)),
-    }
-}
-
-pub fn budget_statuses(conn: &Connection, today: NaiveDate) -> Result<Vec<BudgetStatus>> {
-    let budgets: Vec<(String, String, i64)> = conn
-        .prepare("SELECT c.name, b.period, b.amount_cents FROM budgets b JOIN categories c ON c.id = b.category_id ORDER BY b.period, c.name")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect::<Result<_, _>>()?;
-    if budgets.is_empty() {
-        return Ok(vec![]);
-    }
-    let txs = load(conn, year_start(today).min(week_start(today)), today)?;
-    let planned = load_planned(conn)?;
-    let mut out = Vec::new();
-    for (category, period, limit) in budgets {
-        let (start, end) = period_range(&period, today);
-        let spent: i64 = expense_entries(&txs, &planned, start, today)
-            .iter()
-            .filter(|e| e.category.as_deref() == Some(category.as_str()))
-            .map(|e| e.spent)
-            .sum();
-        let total_days = (end - start).num_days() + 1;
-        let elapsed = ((today - start).num_days() + 1) as f64 / total_days as f64;
-        let used = spent as f64 / limit as f64;
-        let state = if spent > limit {
-            "sforato"
-        } else if used > elapsed + 0.15 && used > 0.3 {
-            "attenzione"
-        } else {
-            "ok"
-        };
-        out.push(BudgetStatus {
-            category,
-            period,
-            limit: eur(limit),
-            spent: eur(spent),
-            remaining: eur(limit - spent),
-            used: (used * 1000.0).round() / 1000.0,
-            elapsed: (elapsed * 1000.0).round() / 1000.0,
-            state,
-        });
-    }
-    Ok(out)
 }
 
 #[derive(Debug, Serialize)]
@@ -732,7 +688,8 @@ pub fn balance_history(conn: &Connection, today: NaiveDate, days: u64) -> Result
             let daily: BTreeMap<NaiveDate, i64> = conn
                 .prepare(
                     "SELECT booking_date, SUM(amount_cents) FROM transactions
-                     WHERE account_uid = ?1 AND currency = ?2 GROUP BY booking_date",
+                     WHERE account_uid = ?1 AND currency = ?2 AND funded_by IS NULL
+                     GROUP BY booking_date",
                 )?
                 .query_map(params![uid, currency], |r| {
                     Ok((parse_date(&r.get::<_, String>(0)?), r.get(1)?))
@@ -900,35 +857,6 @@ pub mod tests {
         assert_eq!(r[0].typical_amount, 12.99);
         assert!(r[0].active);
         assert!(!r[0].planned);
-    }
-
-    #[test]
-    fn budget_pace_states() {
-        let conn = db::open_in_memory().unwrap();
-        let cat = db::category_id(&conn, "Ristoranti e bar").unwrap();
-        conn.execute("INSERT INTO budgets VALUES (?1, 'month', 20000)", [cat])
-            .unwrap();
-        add_tx(
-            &conn,
-            "2026-11-02",
-            -14000,
-            "trattoria",
-            Some("Ristoranti e bar"),
-        );
-        // 70% used at day 10/30 (33%) -> attenzione
-        let s = budget_statuses(&conn, d("2026-11-10")).unwrap();
-        assert_eq!(s[0].state, "attenzione");
-        add_tx(
-            &conn,
-            "2026-11-09",
-            -7000,
-            "pizzeria",
-            Some("Ristoranti e bar"),
-        );
-        assert_eq!(
-            budget_statuses(&conn, d("2026-11-10")).unwrap()[0].state,
-            "sforato"
-        );
     }
 
     #[test]
