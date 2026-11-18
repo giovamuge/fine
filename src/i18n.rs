@@ -1,6 +1,6 @@
 //! Language of the text written for people (alerts, budget descriptions). Italian everywhere by
 //! default (CLI, MCP, notifications); the web dashboard asks for English per request with the
-//! `X-Fine-Lang` header, which `web.rs` turns into the language of the code serving that request.
+//! `X-Fine-Lang` header, which the web layer turns into the language of the code serving it.
 
 use std::cell::Cell;
 
@@ -15,10 +15,27 @@ impl Lang {
     /// "en…" is English, anything else Italian.
     pub fn parse(s: &str) -> Self {
         if s.trim().to_ascii_lowercase().starts_with("en") {
-            Lang::En
+            Self::En
         } else {
-            Lang::It
+            Self::It
         }
+    }
+
+    /// The language of the current request (task), else of the current thread.
+    pub fn current() -> Self {
+        TASK_LANG
+            .try_with(|l| *l)
+            .unwrap_or_else(|_| THREAD_LANG.with(Cell::get))
+    }
+
+    /// For blocking work on a pooled thread: make this the thread's language.
+    pub fn enter(self) {
+        THREAD_LANG.with(|l| l.set(self));
+    }
+
+    /// Runs a future with this language (async code that may move between threads).
+    pub async fn scope<F: Future>(self, f: F) -> F::Output {
+        TASK_LANG.scope(self, f).await
     }
 }
 
@@ -27,31 +44,18 @@ thread_local! {
 }
 
 tokio::task_local! {
-    /// Set by the web server around each request (async code that may move between threads).
-    pub static TASK_LANG: Lang;
+    static TASK_LANG: Lang;
 }
 
-/// The language of the current request (task), else of the current thread.
-pub fn lang() -> Lang {
-    TASK_LANG
-        .try_with(|l| *l)
-        .unwrap_or_else(|_| THREAD_LANG.with(Cell::get))
-}
-
-pub fn en() -> bool {
-    lang() == Lang::En
-}
-
-/// For blocking work on a pooled thread: set the language at the start of every job.
-pub fn set_thread(lang: Lang) {
-    THREAD_LANG.with(|l| l.set(lang));
+pub fn is_en() -> bool {
+    Lang::current() == Lang::En
 }
 
 /// `tr!("Italian {x}", "English {x}", ...)`: `format!` with the text of the current language.
 #[macro_export]
 macro_rules! tr {
     ($it:literal, $en:literal $(, $arg:expr)* $(,)?) => {
-        if $crate::i18n::en() {
+        if $crate::i18n::is_en() {
             format!($en $(, $arg)*)
         } else {
             format!($it $(, $arg)*)
@@ -67,9 +71,9 @@ mod tests {
     fn picks_the_language_of_the_thread() {
         let n = 3;
         assert_eq!(tr!("{n} giorni", "{n} days"), "3 giorni");
-        set_thread(Lang::En);
+        Lang::En.enter();
         assert_eq!(tr!("{n} giorni", "{n} days"), "3 days");
-        set_thread(Lang::It);
+        Lang::It.enter();
         assert_eq!(Lang::parse("en-GB"), Lang::En);
         assert_eq!(Lang::parse("it"), Lang::It);
     }

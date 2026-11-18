@@ -1,9 +1,11 @@
 //! Configuration: infrastructure and secrets only (`~/.fine/config.toml`).
 //! Financial settings (budgets, goals) live in the database so the AI can change them.
 
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
 
 pub const DEFAULT_API_BASE: &str = "https://api.enablebanking.com";
 
@@ -29,7 +31,7 @@ pub struct EnableBankingConfig {
 }
 
 fn default_api_base() -> String {
-    DEFAULT_API_BASE.to_string()
+    DEFAULT_API_BASE.to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,7 @@ pub struct DashboardConfig {
     pub password: Option<String>,
 }
 
+/// Where fine keeps its files.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub dir: PathBuf,
@@ -59,7 +62,9 @@ impl Paths {
         let dir = match std::env::var_os("FINE_DATA_DIR") {
             Some(d) => PathBuf::from(d),
             None => directories::BaseDirs::new()
-                .context("impossibile determinare la home directory")?
+                .ok_or_else(|| {
+                    Error::NotConfigured("impossibile determinare la home directory".into())
+                })?
                 .home_dir()
                 .join(".fine"),
         };
@@ -75,8 +80,10 @@ impl Paths {
     }
 
     pub fn ensure_dir(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.dir)
-            .with_context(|| format!("creazione di {}", self.dir.display()))?;
+        std::fs::create_dir_all(&self.dir).map_err(|cause| Error::File {
+            context: format!("creazione di {}", self.dir.display()),
+            cause,
+        })?;
         restrict_permissions(&self.dir, 0o700);
         Ok(())
     }
@@ -87,27 +94,39 @@ impl Config {
         if !paths.config.exists() {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(&paths.config)
-            .with_context(|| format!("lettura di {}", paths.config.display()))?;
-        toml::from_str(&text)
-            .with_context(|| format!("config non valida: {}", paths.config.display()))
+        let text = std::fs::read_to_string(&paths.config).map_err(|cause| Error::File {
+            context: format!("lettura di {}", paths.config.display()),
+            cause,
+        })?;
+        toml::from_str(&text).map_err(|e| {
+            Error::invalid(format!(
+                "config non valida: {}: {e}",
+                paths.config.display()
+            ))
+        })
     }
 
     pub fn save(&self, paths: &Paths) -> Result<()> {
         paths.ensure_dir()?;
-        let text = toml::to_string_pretty(self)?;
+        let text = toml::to_string_pretty(self).map_err(|e| Error::invalid(e.to_string()))?;
         std::fs::write(&paths.config, text)?;
         restrict_permissions(&paths.config, 0o600);
         Ok(())
     }
 
     pub fn enable_banking(&self) -> Result<&EnableBankingConfig> {
-        self.enable_banking
-            .as_ref()
-            .context("Enable Banking non configurato: esegui `fine setup`")
+        self.enable_banking.as_ref().ok_or_else(|| {
+            Error::NotConfigured("Enable Banking non configurato: esegui `fine setup`".into())
+        })
+    }
+
+    /// The dashboard password, if one is set.
+    pub fn dashboard_password(&self) -> Option<&str> {
+        self.dashboard.as_ref()?.password.as_deref()
     }
 }
 
+/// Owner-only permissions for files holding secrets or financial data.
 #[cfg(unix)]
 pub fn restrict_permissions(path: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
