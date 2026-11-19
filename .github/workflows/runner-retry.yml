@@ -1,11 +1,11 @@
-name: Release retry
+name: Runner retry
 # GitHub sometimes has no macOS runner free: the job waits in the queue and is cancelled without
-# running a single step ("The job was not acquired by Runner"). When a Release run ends like
-# that, re-run its failed jobs, up to 3 attempts in all. Real failures (a step that ran and
+# running a single step ("The job was not acquired by Runner"). When a CI or Release run ends
+# like that, re-run its failed jobs, up to 3 attempts in all. Real failures (a step that ran and
 # failed) are left alone.
 on:
   workflow_run:
-    workflows: [Release]
+    workflows: [CI, Release]
     types: [completed]
 permissions:
   actions: write
