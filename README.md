@@ -226,7 +226,7 @@ Create them by asking your AI or in the dashboard's visual editor.
 - Data stays in `~/.fine/` (or `FINE_DATA_DIR`) with 0600 permissions. Delete the folder to forget everything.
 - A cloud AI sends the transactions it reads to its provider. To keep everything local, use an MCP client with an Ollama model.
 - Bank descriptions are untrusted text: returned as data, never interpreted as HTML, and the AI is told not to follow instructions in them.
-- Analyses only use **EUR** transactions; accounts in other currencies are synced and browsable.
+- Analyses are in **EUR**: transactions and balances in other currencies count at the European Central Bank rate of their day, fetched from [Frankfurter](https://frankfurter.dev) (free, no key; only currency codes and dates are sent) and kept locally. Until a rate is available, those transactions are left out and `status` says so.
 
 ## Development
 

@@ -462,6 +462,8 @@ export const EN: Record<string, string> = {
   "es. amazon": "e.g. amazon",
   "es. vacanza-londra": "e.g. london-trip",
   "escluso dal totale": "left out of the total",
+  "cambio non disponibile": "no exchange rate yet",
+  "Cambi valuta non aggiornati: {error}": "Exchange rates not updated: {error}",
   "giorni, fino a oggi": "days, up to today",
   "già spesi {amount}": "{amount} already spent",
   "ieri": "yesterday",

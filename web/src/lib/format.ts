@@ -41,6 +41,18 @@ export function signed(n: number, currency?: string | null): string {
   return s;
 }
 
+/** A transaction amount in its own currency: "+12,30 €", "-624,32 £". */
+export function amountIn(n: number, currency: string | null | undefined): string {
+  const s = money(n, currency);
+  return n > 0 ? `+${s}` : s;
+}
+
+/** For an amount in another currency, its value in euro ("≈ -731,29 €"); null for euro. */
+export function inEuro(currency: string | null | undefined, eurAmount: number | null): string | null {
+  if (!currency || currency.toUpperCase() === "EUR") return null;
+  return eurAmount === null ? t("cambio non disponibile") : `≈ ${amountIn(eurAmount, "EUR")}`;
+}
+
 export function percent(frac: number): string {
   return pct.format(frac);
 }

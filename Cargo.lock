@@ -715,6 +715,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "toml",
  "tower",
@@ -1972,6 +1973,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b"
 dependencies = [
  "bitflags",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",

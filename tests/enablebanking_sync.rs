@@ -1,7 +1,9 @@
 //! End-to-end sync against a mocked Enable Banking API.
 //! The key in tests/fixtures is a throwaway key generated only for these tests.
 
-use fine::{db, enablebanking::Client, sync};
+use fine::bank::Client;
+use fine::services::sync;
+use fine::storage::Store;
 use jsonwebtoken::EncodingKey;
 use serde_json::json;
 use wiremock::matchers::{header_regex, method, path, query_param, query_param_is_missing};
@@ -58,15 +60,17 @@ async fn syncs_pages_dedups_and_categorizes() {
         .mount(&server)
         .await;
 
-    let mut conn = db::open_in_memory().unwrap();
-    conn.execute(
-        "INSERT INTO accounts (uid, currency, name) VALUES ('acc-1', 'EUR', 'Conto')",
-        [],
-    )
-    .unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency, name) VALUES ('acc-1', 'EUR', 'Conto')",
+            [],
+        )
+        .unwrap();
     let c = client(&server.uri());
 
-    let report = sync::sync_all(&mut conn, &c).await.unwrap();
+    let report = sync::sync_all(&mut store, &c).await.unwrap();
     assert_eq!(report.accounts[0].error, None);
     assert_eq!(
         report.accounts[0].inserted, 3,
@@ -77,11 +81,13 @@ async fn syncs_pages_dedups_and_categorizes() {
         "esselunga and netflix match seed rules"
     );
 
-    let balance: i64 = conn
+    let balance: i64 = store
+        .conn()
         .query_row("SELECT balance_cents FROM accounts", [], |r| r.get(0))
         .unwrap();
     assert_eq!(balance, 153055);
-    let netflix_cents: i64 = conn
+    let netflix_cents: i64 = store
+        .conn()
         .query_row(
             "SELECT amount_cents FROM transactions WHERE entry_reference = 'r3'",
             [],
@@ -91,28 +97,32 @@ async fn syncs_pages_dedups_and_categorizes() {
     assert_eq!(netflix_cents, -1299);
 
     // Re-sync: overlap window returns the same data, nothing duplicated.
-    let again = sync::sync_all(&mut conn, &c).await.unwrap();
+    let again = sync::sync_all(&mut store, &c).await.unwrap();
     assert_eq!(again.accounts[0].inserted, 0);
 }
 
 #[tokio::test]
 async fn respects_daily_sync_limit() {
     let server = MockServer::start().await;
-    let mut conn = db::open_in_memory().unwrap();
-    conn.execute(
-        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
-        [],
-    )
-    .unwrap();
-    let now = chrono::Utc::now().to_rfc3339();
-    for _ in 0..sync::MAX_SYNCS_PER_DAY {
-        conn.execute(
-            "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
-            [&now],
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+            [],
         )
         .unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    for _ in 0..sync::MAX_SYNCS_PER_DAY {
+        store
+            .conn()
+            .execute(
+                "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
+                [&now],
+            )
+            .unwrap();
     }
-    let report = sync::sync_all(&mut conn, &client(&server.uri()))
+    let report = sync::sync_all(&mut store, &client(&server.uri()))
         .await
         .unwrap();
     assert!(report.accounts[0].skipped.is_some());
@@ -125,12 +135,14 @@ async fn respects_daily_sync_limit() {
 #[tokio::test]
 async fn network_failures_do_not_use_the_daily_limit() {
     let server = MockServer::start().await;
-    let mut conn = db::open_in_memory().unwrap();
-    conn.execute(
-        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
-        [],
-    )
-    .unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+            [],
+        )
+        .unwrap();
     let now = chrono::Utc::now().to_rfc3339();
     // Three answers from the bank (they count) and one DNS failure at wake-up (it does not).
     for msg in [
@@ -139,13 +151,15 @@ async fn network_failures_do_not_use_the_daily_limit() {
         "Enable Banking 429 Too Many Requests: {}",
         "error sending request for url (...): dns error",
     ] {
-        conn.execute(
-            "INSERT INTO sync_log (account_uid, at, ok, message) VALUES ('acc-1', ?1, 0, ?2)",
-            [&now, msg],
-        )
-        .unwrap();
+        store
+            .conn()
+            .execute(
+                "INSERT INTO sync_log (account_uid, at, ok, message) VALUES ('acc-1', ?1, 0, ?2)",
+                [&now, msg],
+            )
+            .unwrap();
     }
-    let report = sync::sync_all(&mut conn, &client(&server.uri()))
+    let report = sync::sync_all(&mut store, &client(&server.uri()))
         .await
         .unwrap();
     assert!(
@@ -165,13 +179,15 @@ async fn reports_expired_consent_clearly() {
         )
         .mount(&server)
         .await;
-    let mut conn = db::open_in_memory().unwrap();
-    conn.execute(
-        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
-        [],
-    )
-    .unwrap();
-    let report = sync::sync_all(&mut conn, &client(&server.uri()))
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+            [],
+        )
+        .unwrap();
+    let report = sync::sync_all(&mut store, &client(&server.uri()))
         .await
         .unwrap();
     let err = report.accounts[0].error.as_deref().unwrap();
@@ -180,40 +196,48 @@ async fn reports_expired_consent_clearly() {
 
 #[test]
 fn staleness_drives_automatic_sync() {
-    let conn = db::open_in_memory().unwrap();
+    let store = Store::open_in_memory().unwrap();
     assert!(
-        !sync::is_stale(&conn).unwrap(),
+        !sync::is_stale(&store).unwrap(),
         "no accounts: nothing to sync"
     );
-    conn.execute(
-        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
-        [],
-    )
-    .unwrap();
-    assert!(sync::is_stale(&conn).unwrap(), "never synced");
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+            [],
+        )
+        .unwrap();
+    assert!(sync::is_stale(&store).unwrap(), "never synced");
     let old = (chrono::Utc::now() - chrono::Duration::hours(sync::STALE_HOURS + 1)).to_rfc3339();
-    conn.execute(
-        "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
-        [&old],
-    )
-    .unwrap();
-    assert!(sync::is_stale(&conn).unwrap(), "last sync older than 6h");
+    store
+        .conn()
+        .execute(
+            "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
+            [&old],
+        )
+        .unwrap();
+    assert!(sync::is_stale(&store).unwrap(), "last sync older than 6h");
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 0)",
-        [&now],
-    )
-    .unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 0)",
+            [&now],
+        )
+        .unwrap();
     assert!(
-        sync::is_stale(&conn).unwrap(),
+        sync::is_stale(&store).unwrap(),
         "a failed sync does not count as fresh"
     );
-    conn.execute(
-        "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
-        [&now],
-    )
-    .unwrap();
-    assert!(!sync::is_stale(&conn).unwrap());
+    store
+        .conn()
+        .execute(
+            "INSERT INTO sync_log (account_uid, at, ok) VALUES ('acc-1', ?1, 1)",
+            [&now],
+        )
+        .unwrap();
+    assert!(!sync::is_stale(&store).unwrap());
 }
 
 #[tokio::test]
@@ -246,18 +270,21 @@ async fn falls_back_to_shorter_history_when_bank_rejects_period() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"balances": []})))
         .mount(&server)
         .await;
-    let mut conn = db::open_in_memory().unwrap();
-    conn.execute(
-        "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
-        [],
-    )
-    .unwrap();
-    let report = sync::sync_all(&mut conn, &client(&server.uri()))
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute(
+            "INSERT INTO accounts (uid, currency) VALUES ('acc-1', 'EUR')",
+            [],
+        )
+        .unwrap();
+    let report = sync::sync_all(&mut store, &client(&server.uri()))
         .await
         .unwrap();
     assert_eq!(report.accounts[0].error, None);
     assert_eq!(report.accounts[0].inserted, 1);
-    let logged: i64 = conn
+    let logged: i64 = store
+        .conn()
         .query_row("SELECT COUNT(*) FROM sync_log", [], |r| r.get(0))
         .unwrap();
     assert_eq!(logged, 1, "retries inside one sync count as one sync");

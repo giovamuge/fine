@@ -13,7 +13,7 @@ import { TagAdd, TagChips } from "@/components/TagInput";
 import { api, errorMessage } from "@/lib/api";
 import { useApp } from "@/lib/app-state";
 import { CategoryIcon } from "@/lib/categories";
-import { euro, fmtDate, integer } from "@/lib/format";
+import { amountIn, euro, fmtDate, inEuro, integer } from "@/lib/format";
 import { useToast } from "@/lib/toast";
 import type { TxView } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -136,7 +136,10 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
       <div className="flex flex-col gap-5 pb-2">
         <div className="flex items-center gap-3">
           <CategoryIcon category={category} className="size-11 rounded-xl text-xl" />
-          <div className={cn("tabular text-3xl font-semibold tracking-tight", item.amount > 0 && "text-positive")}>{item.amount > 0 ? `+${euro(item.amount)}` : euro(item.amount)}</div>
+          <div className="flex flex-col">
+            <div className={cn("tabular text-3xl font-semibold tracking-tight", item.amount > 0 && "text-positive")}>{amountIn(item.amount, item.currency)}</div>
+            {inEuro(item.currency, item.amount_eur) && <div className="tabular text-sm text-muted-foreground">{inEuro(item.currency, item.amount_eur)}</div>}
+          </div>
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           {facts.map(([k, v]) => (
@@ -194,7 +197,7 @@ export function TxDetail({ tx, onClose, tagSuggestions }: { tx: TxView | null; o
                     <SelectItem value="0">{t("Nessuno")}</SelectItem>
                     {[3, 6, 12, 24, 36].map((m) => (
                       <SelectItem key={m} value={String(m)}>
-                        {t("{n} mesi ({amount} al mese)", { n: m, amount: euro(-item.amount / m) })}
+                        {t("{n} mesi ({amount} al mese)", { n: m, amount: euro(-(item.amount_eur ?? item.amount) / m) })}
                       </SelectItem>
                     ))}
                   </SelectContent>
